@@ -6,5 +6,8 @@ pydantic==2.10.4
 pydantic-settings==2.7.0
 celery[redis]==5.4.0
 httpx==0.28.1
+alembic==1.14.0        # миграции схемы БД
+geoalchemy2==0.16.0    # тип Geometry для PostGIS
+shapely==2.0.6         # пересечения полигонов, когда БД — SQLite
 # Нужен только при HP_SATELLITE_PROVIDER=gee
 earthengine-api>=1.0,<2

@@ -2,7 +2,7 @@
 # Сайт: http://localhost:8080   API и Swagger: http://localhost:8000/docs
 services:
   db:
-    image: postgres:16-alpine
+    image: postgis/postgis:16-3.4-alpine   # PostgreSQL + расширение PostGIS
     environment:
       POSTGRES_DB: harvestpay
       POSTGRES_USER: harvestpay

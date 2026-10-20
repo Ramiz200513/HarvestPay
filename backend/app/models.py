@@ -10,6 +10,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime, timezone
 
+from geoalchemy2 import Geometry
 from sqlalchemy import JSON, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -18,6 +19,11 @@ from .db import Base
 
 # В PostgreSQL храним JSON как JSONB (быстрее и индексируется), в SQLite — как обычный JSON.
 JsonType = JSON().with_variant(JSONB(), "postgresql")
+
+# Контур поля для пространственных запросов. В PostgreSQL — настоящая геометрия PostGIS
+# (с GIST-индексом, см. миграцию 0002), в SQLite — просто текст WKT: там пересечения
+# считаются в Python (services/overlap.py). spatial_index=False — индекс создаёт миграция.
+GeomType = Text().with_variant(Geometry("POLYGON", srid=4326, spatial_index=False), "postgresql")
 
 
 def utcnow() -> datetime:
@@ -60,6 +66,12 @@ class Field(Base):
     area_ha: Mapped[float] = mapped_column(Float)
     centroid_lat: Mapped[float] = mapped_column(Float)
     centroid_lon: Mapped[float] = mapped_column(Float)
+    # PostGIS-копия контура (EWKT при записи) и рамка (bbox) — для быстрого поиска пересечений
+    geom: Mapped[str | None] = mapped_column(GeomType)
+    min_lon: Mapped[float | None] = mapped_column(Float)
+    min_lat: Mapped[float | None] = mapped_column(Float)
+    max_lon: Mapped[float | None] = mapped_column(Float)
+    max_lat: Mapped[float | None] = mapped_column(Float)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     farm: Mapped[Farm] = relationship(back_populates="fields")
@@ -107,6 +119,8 @@ class Application(Base):
     status: Mapped[str] = mapped_column(String(20), default=ApplicationStatus.PENDING, index=True)
     requested_amount: Mapped[int] = mapped_column(Integer)
     error_message: Mapped[str | None] = mapped_column(Text)
+    # Пересечения с полями других хозяйств на момент подачи (см. services/overlap.py)
+    overlaps: Mapped[list] = mapped_column(JsonType, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

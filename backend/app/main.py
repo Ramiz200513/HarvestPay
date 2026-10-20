@@ -13,7 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .api import analyst, applications, farms
 from .config import get_settings
-from .db import Base, SessionLocal, engine
+from .db import SessionLocal, engine
+from .migrate import run_migrations
 from .seed import seed_products
 
 logging.basicConfig(level=logging.INFO)
@@ -21,9 +22,8 @@ logging.basicConfig(level=logging.INFO)
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # Создаём таблицы, если их нет, и заполняем каталог. Для учебного MVP этого достаточно;
-    # когда схема начнёт меняться на живых данных — подключаем миграции Alembic.
-    Base.metadata.create_all(engine)
+    # Приводим схему БД к последней версии (миграции Alembic) и заполняем каталог товаров.
+    run_migrations(engine)
     with SessionLocal() as db:
         seed_products(db)
     yield

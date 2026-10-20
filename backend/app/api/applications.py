@@ -3,12 +3,20 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import Application, ApplicationItem, Field, Product
-from ..schemas import ApplicationCreate, ApplicationCreated, ApplicationOut, ProductOut
+from ..models import Application, ApplicationItem, Farm, Field, Product
+from ..schemas import (
+    ApplicationCreate,
+    ApplicationCreated,
+    ApplicationOut,
+    OverlapCheckIn,
+    OverlapCheckOut,
+    ProductOut,
+)
 from ..services.geo import GeometryError, parse_field_geometry
+from ..services.overlap import find_overlaps
 from ..tasks import enqueue_application
 from .farms import verify_and_store
-from .serializers import application_out
+from .serializers import application_out, overlap_out
 
 router = APIRouter(prefix="/api", tags=["Заявки"])
 
@@ -43,9 +51,18 @@ def create_application(
     if missing:
         raise HTTPException(status_code=422, detail={"message": f"Нет товаров с id {sorted(missing)}", "reasons": []})
 
+    # 4. Антифрод: не заявляло ли этот участок другое хозяйство (PostGIS / shapely).
+    overlaps = find_overlaps(db, geom, exclude_farm_id=farm.id)
+
+    min_lon, min_lat, max_lon, max_lat = geom.bbox
     field = Field(
         farm_id=farm.id,
         geometry=geom.geojson,
+        geom=geom.ewkt,
+        min_lon=min_lon,
+        min_lat=min_lat,
+        max_lon=max_lon,
+        max_lat=max_lat,
         crop=body.field.crop.strip(),
         area_ha=geom.area_ha,
         centroid_lat=geom.centroid_lat,
@@ -60,13 +77,29 @@ def create_application(
         field=field,
         items=items,
         requested_amount=sum(i.quantity * i.price for i in items),
+        overlaps=[o.to_dict() for o in overlaps],
     )
     db.add(app)
     db.commit()
 
-    # 4. Ставим в очередь: спутник + скоринг выполнятся в фоне, ответ уходит сразу.
+    # 5. Ставим в очередь: спутник + скоринг выполнятся в фоне, ответ уходит сразу.
     enqueue_application(app.id, background)
     return ApplicationCreated(id=app.id, status=app.status)
+
+
+@router.post("/fields/check", response_model=OverlapCheckOut, summary="Проверить контур поля до подачи заявки")
+def check_field(body: OverlapCheckIn, db: Session = Depends(get_db)) -> OverlapCheckOut:
+    """Фронтенд вызывает это, пока фермер рисует поле: площадь по версии сервера + пересечения.
+    Чьё именно поле пересекается, фермеру не сообщаем — только площадь и долю."""
+    try:
+        geom = parse_field_geometry(body.geometry)
+    except GeometryError as exc:
+        raise HTTPException(status_code=422, detail={"message": str(exc), "reasons": []}) from exc
+    farm_id = None
+    if body.bin:
+        farm_id = db.scalar(select(Farm.id).where(Farm.bin == body.bin.strip()))
+    overlaps = find_overlaps(db, geom, exclude_farm_id=farm_id)
+    return OverlapCheckOut(area_ha=geom.area_ha, overlaps=[overlap_out(o.to_dict(), full=False) for o in overlaps])
 
 
 @router.get("/applications/{application_id}", response_model=ApplicationOut, summary="Статус и решение по заявке")

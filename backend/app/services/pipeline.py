@@ -103,7 +103,18 @@ def process_application(db: Session, application_id: str, today: date | None = N
         decision.schedule = build_schedule(amount, result.score_class, today)
         decision.decided_by = "auto"
 
-        if result.score_class == "C":
+        if app.overlaps:
+            # Пересечение с чужим полем: балл и лимит считаем, но деньги без аналитика не выдаём
+            top = app.overlaps[0]
+            decision.reasons = [
+                *reasons,
+                f"Контур пересекается с полем другого хозяйства: {top['overlap_ha']:g} га "
+                f"({top['share']:.0%} участка) — нужна проверка документов на землю",
+            ]
+            decision.approved_amount = 0
+            decision.schedule = []
+            app.status = ApplicationStatus.REVIEW
+        elif result.score_class == "C":
             app.status = ApplicationStatus.REVIEW
         elif amount > 0:
             app.status = ApplicationStatus.APPROVED

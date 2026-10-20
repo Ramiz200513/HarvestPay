@@ -34,6 +34,26 @@ class FieldGeometry:
     area_ha: float
     centroid_lat: float
     centroid_lon: float
+    bbox: tuple[float, float, float, float]  # (min_lon, min_lat, max_lon, max_lat)
+
+    @property
+    def ewkt(self) -> str:
+        """Тот же контур в формате, который понимает PostGIS: 'SRID=4326;POLYGON((lon lat, ...))'."""
+        return to_ewkt(self.geojson)
+
+
+def to_ewkt(geojson: dict) -> str:
+    ring = geojson["coordinates"][0]
+    return "SRID=4326;POLYGON((" + ", ".join(f"{lon} {lat}" for lon, lat in ring) + "))"
+
+
+def polygon_area_ha(rings: list[list[list[float]]]) -> float:
+    """Площадь полигона с дырами: внешнее кольцо минус внутренние."""
+    if not rings:
+        return 0.0
+    outer = ring_area_m2(rings[0])
+    holes = sum(ring_area_m2(r) for r in rings[1:])
+    return (outer - holes) / 10_000
 
 
 def ring_area_m2(ring: list[list[float]]) -> float:
@@ -115,4 +135,10 @@ def parse_field_geometry(geojson: dict) -> FieldGeometry:
         area_ha=round(area_ha, 2),
         centroid_lat=round(centroid_lat, 6),
         centroid_lon=round(centroid_lon, 6),
+        bbox=(
+            min(p[0] for p in pts),
+            min(p[1] for p in pts),
+            max(p[0] for p in pts),
+            max(p[1] for p in pts),
+        ),
     )

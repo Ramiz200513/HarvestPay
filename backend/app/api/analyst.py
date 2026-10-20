@@ -32,7 +32,7 @@ def list_applications(status: str | None = None, db: Session = Depends(get_db)) 
 
 @router.get("/applications/{application_id}", response_model=ApplicationOut)
 def get_application(application_id: str, db: Session = Depends(get_db)) -> ApplicationOut:
-    return application_out(_get(db, application_id))
+    return application_out(_get(db, application_id), full=True)
 
 
 @router.post("/applications/{application_id}/decision", response_model=ApplicationOut)
@@ -62,7 +62,7 @@ def decide(application_id: str, body: AnalystDecisionIn, db: Session = Depends(g
     decision.decided_by = "analyst"
     decision.analyst_comment = body.comment
     db.commit()
-    return application_out(app)
+    return application_out(app, full=True)
 
 
 @router.post("/applications/{application_id}/retry", response_model=ApplicationOut)
@@ -72,4 +72,4 @@ def retry(application_id: str, background: BackgroundTasks, db: Session = Depend
     if app.status != ApplicationStatus.ERROR:
         raise HTTPException(status_code=409, detail="Перезапуск возможен только для заявок с ошибкой")
     enqueue_application(app.id, background)
-    return application_out(app)
+    return application_out(app, full=True)

@@ -102,6 +102,28 @@ class FieldOut(BaseModel):
     centroid_lon: float
 
 
+class OverlapOut(BaseModel):
+    """Пересечение с чужим полем. Фермеру показываем только площадь и долю —
+    чьё это поле, видит лишь аналитик (farm_name, farm_bin, geometry = None в публичном ответе)."""
+
+    overlap_ha: float
+    share: float
+    other_area_ha: float
+    farm_name: str | None = None
+    farm_bin: str | None = None
+    geometry: dict | None = None
+
+
+class OverlapCheckIn(BaseModel):
+    bin: str | None = None
+    geometry: dict
+
+
+class OverlapCheckOut(BaseModel):
+    area_ha: float
+    overlaps: list[OverlapOut]
+
+
 class ApplicationOut(BaseModel):
     id: str
     status: str
@@ -114,6 +136,7 @@ class ApplicationOut(BaseModel):
     items: list[ItemOut]
     seasons: list[SeasonOut]
     decision: DecisionOut | None
+    overlaps: list[OverlapOut]
 
 
 class ApplicationListItem(BaseModel):
@@ -127,6 +150,7 @@ class ApplicationListItem(BaseModel):
     requested_amount: int
     score: float | None
     score_class: str | None
+    has_overlaps: bool
 
 
 class AnalystDecisionIn(BaseModel):

@@ -11,6 +11,7 @@ from ..schemas import (
     FarmOut,
     FieldOut,
     ItemOut,
+    OverlapOut,
     SeasonOut,
 )
 from ..services.registry import FarmVerification
@@ -43,7 +44,15 @@ def farm_out(farm: Farm | FarmVerification) -> FarmOut:
     )
 
 
-def application_out(app: Application) -> ApplicationOut:
+def overlap_out(raw: dict, full: bool) -> OverlapOut:
+    out = OverlapOut(overlap_ha=raw["overlap_ha"], share=raw["share"], other_area_ha=raw["other_area_ha"])
+    if full:  # аналитику — кто владелец и где именно поле
+        out.farm_name, out.farm_bin, out.geometry = raw.get("farm_name"), raw.get("farm_bin"), raw.get("geometry")
+    return out
+
+
+def application_out(app: Application, full: bool = False) -> ApplicationOut:
+    """full=True — ответ для аналитика (с данными о чужих полях), False — для фермера."""
     d = app.decision
     return ApplicationOut(
         id=app.id,
@@ -85,6 +94,7 @@ def application_out(app: Application) -> ApplicationOut:
             decided_by=d.decided_by,
             analyst_comment=d.analyst_comment,
         ),
+        overlaps=[overlap_out(o, full) for o in (app.overlaps or [])],
     )
 
 
@@ -101,4 +111,5 @@ def application_list_item(app: Application) -> ApplicationListItem:
         requested_amount=app.requested_amount,
         score=d.score if d else None,
         score_class=d.score_class if d else None,
+        has_overlaps=bool(app.overlaps),
     )
