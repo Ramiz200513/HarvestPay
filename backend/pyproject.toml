@@ -1,0 +1,20 @@
+[project]
+name = "harvestpay-backend"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "I"]
+ignore = ["E501"]  # длинные строки-сообщения на русском не переносим
+
+[tool.ruff.lint.flake8-bugbear]
+# Depends()/Header() в аргументах — стандартная идиома FastAPI
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Header"]

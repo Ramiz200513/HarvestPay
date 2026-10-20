@@ -1,0 +1,60 @@
+# Полный стенд одной командой:  docker compose up --build
+# Сайт: http://localhost:8080   API и Swagger: http://localhost:8000/docs
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: harvestpay
+      POSTGRES_USER: harvestpay
+      POSTGRES_PASSWORD: harvestpay
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U harvestpay -d harvestpay"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+
+  api:
+    build: ./backend
+    environment: &backend-env
+      HP_DATABASE_URL: postgresql+psycopg://harvestpay:harvestpay@db:5432/harvestpay
+      HP_TASK_MODE: celery
+      HP_REDIS_URL: redis://redis:6379/0
+      HP_SATELLITE_PROVIDER: ${HP_SATELLITE_PROVIDER:-mock}
+      HP_REGISTRY_PROVIDER: ${HP_REGISTRY_PROVIDER:-mock}
+      HP_GEE_PROJECT: ${HP_GEE_PROJECT:-}
+      HP_GEE_SERVICE_ACCOUNT: ${HP_GEE_SERVICE_ACCOUNT:-}
+      HP_GEE_KEY_FILE: ${HP_GEE_KEY_FILE:-}
+      HP_ANALYST_TOKEN: ${HP_ANALYST_TOKEN:-analyst-demo-token}
+      HP_CORS_ORIGINS: '["http://localhost:8080"]'
+    volumes:
+      - ./secrets:/secrets:ro   # сюда кладётся JSON-ключ сервисного аккаунта GEE
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    ports:
+      - "8000:8000"
+
+  worker:
+    build: ./backend
+    command: celery -A app.worker worker --loglevel=info --concurrency=2
+    environment: *backend-env
+    volumes:
+      - ./secrets:/secrets:ro
+    depends_on:
+      - api   # API при старте создаёт таблицы — воркер стартует после него
+
+  web:
+    build: ./frontend
+    depends_on:
+      - api
+    ports:
+      - "8080:80"
+
+volumes:
+  pgdata:

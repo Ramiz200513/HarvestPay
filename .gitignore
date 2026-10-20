@@ -1,0 +1,10 @@
+.env
+secrets/*
+!secrets/README.txt
+**/__pycache__/
+backend/.venv/
+backend/*.db
+.pytest_cache/
+frontend/node_modules/
+frontend/dist/
+.ruff_cache/
