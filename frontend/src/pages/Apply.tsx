@@ -7,7 +7,7 @@ import FieldMap from "../components/FieldMap";
 import { CATEGORY_LABEL, formatHa, formatKzt } from "../lib/format";
 import { closeRing, ringAreaHa } from "../lib/geo";
 import { rememberApplication } from "../lib/storage";
-import type { Farm, LngLat, Product, PublicConfig } from "../types";
+import type { Farm, FieldCheck, LngLat, Product, PublicConfig } from "../types";
 
 const CROPS = ["Пшеница яровая", "Ячмень", "Подсолнечник", "Рапс", "Лён масличный", "Овёс"];
 
@@ -31,6 +31,8 @@ export default function Apply() {
   // шаг 2
   const [points, setPoints] = useState<LngLat[]>([]);
   const [crop, setCrop] = useState(CROPS[0]);
+  const [fieldCheck, setFieldCheck] = useState<FieldCheck | null>(null);
+  const [fieldError, setFieldError] = useState<string | null>(null);
 
   // шаг 3
   const [products, setProducts] = useState<Product[]>([]);
@@ -45,6 +47,21 @@ export default function Apply() {
   }, []);
 
   const areaHa = useMemo(() => ringAreaHa(points), [points]);
+
+  // Пока фермер рисует, спрашиваем сервер: корректен ли контур и не заявлен ли участок другим
+  // хозяйством. Запрос уходит через 600 мс после последнего клика (debounce), а не на каждый клик.
+  useEffect(() => {
+    setFieldCheck(null);
+    setFieldError(null);
+    if (points.length < 3) return;
+    const timer = window.setTimeout(() => {
+      api
+        .checkField({ type: "Polygon", coordinates: closeRing(points) }, farm?.bin)
+        .then(setFieldCheck)
+        .catch((e) => setFieldError(e instanceof ApiError ? e.message : null));
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [points, farm?.bin]);
   const total = products.reduce((sum, p) => sum + (qty[p.id] ?? 0) * p.price, 0);
   const estimatedLimit = config ? Math.round((areaHa * config.limit_per_ha) / 1000) * 1000 : 0;
 
@@ -206,6 +223,15 @@ export default function Apply() {
               Очистить
             </button>
           </div>
+          {fieldError && <div className="alert">{fieldError}</div>}
+          {fieldCheck && fieldCheck.overlaps.length > 0 && (
+            <div className="notice warn">
+              <b>Этот участок уже заявлен другим хозяйством</b> — пересечение{" "}
+              {formatHa(fieldCheck.overlaps[0].overlap_ha)} ({Math.round(fieldCheck.overlaps[0].share * 100)}% поля).
+              Заявку можно подать, но автоматически её не одобрят: аналитик попросит документы на землю (договор
+              аренды или акт на право пользования). Если контур залез на соседа случайно — поправьте точки.
+            </div>
+          )}
           <label className="label" htmlFor="crop">
             Культура в этом сезоне
           </label>
@@ -218,7 +244,8 @@ export default function Apply() {
             <button className="btn btn-ghost" onClick={() => setStep(1)}>
               Назад
             </button>
-            <button className="btn btn-primary" disabled={points.length < 3 || areaHa < 1} onClick={() => setStep(3)}>
+            <button className="btn btn-primary" disabled={points.length < 3 || areaHa < 1 || Boolean(fieldError)}
+              onClick={() => setStep(3)}>
               Дальше: товары
             </button>
           </div>

@@ -4,6 +4,7 @@ import type {
   Application,
   ApplicationListItem,
   Farm,
+  FieldCheck,
   GeoPolygon,
   Product,
   PublicConfig,
@@ -55,6 +56,10 @@ export const api = {
     request<Farm>("/api/farms/verify", { method: "POST", body: JSON.stringify({ bin }) }),
 
   products: () => request<Product[]>("/api/products"),
+
+  // Проверка контура до отправки: площадь по версии сервера + пересечения с чужими полями
+  checkField: (geometry: GeoPolygon, bin?: string) =>
+    request<FieldCheck>("/api/fields/check", { method: "POST", body: JSON.stringify({ geometry, bin }) }),
 
   createApplication: (payload: {
     bin: string;

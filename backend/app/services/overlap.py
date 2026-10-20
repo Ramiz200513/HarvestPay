@@ -105,7 +105,11 @@ def find_overlaps(db: Session, geom: FieldGeometry, exclude_farm_id: int | None)
         field = db.get(Field, field_id)
         if field is None or overlap_ha <= 0:
             continue
-        share = overlap_ha / min(geom.area_ha, field.area_ha)
+        smaller = min(geom.area_ha, field.area_ha)
+        # PostGIS считает площадь на эллипсоиде, а наша формула — на сфере: расхождение ~0.3%.
+        # Чтобы не показывать «пересечение больше самого поля», обрезаем по меньшему полю.
+        overlap_ha = min(overlap_ha, smaller)
+        share = overlap_ha / smaller
         if share < MIN_SHARE:
             continue
         farm: Farm = field.farm

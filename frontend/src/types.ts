@@ -62,6 +62,21 @@ export interface Decision {
   analyst_comment: string | null;
 }
 
+// Пересечение с полем другого хозяйства. farm_name/farm_bin/geometry приходят только аналитику.
+export interface Overlap {
+  overlap_ha: number;
+  share: number; // 0..1 — доля от меньшего из двух полей
+  other_area_ha: number;
+  farm_name: string | null;
+  farm_bin: string | null;
+  geometry: GeoPolygon | null;
+}
+
+export interface FieldCheck {
+  area_ha: number;
+  overlaps: Overlap[];
+}
+
 export interface ApplicationItem {
   product_id: number;
   name: string;
@@ -89,6 +104,7 @@ export interface Application {
   items: ApplicationItem[];
   seasons: Season[];
   decision: Decision | null;
+  overlaps: Overlap[];
 }
 
 export interface ApplicationListItem {
@@ -102,6 +118,7 @@ export interface ApplicationListItem {
   requested_amount: number;
   score: number | null;
   score_class: "A" | "B" | "C" | null;
+  has_overlaps: boolean;
 }
 
 export interface PublicConfig {

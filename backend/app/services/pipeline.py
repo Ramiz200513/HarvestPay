@@ -108,7 +108,7 @@ def process_application(db: Session, application_id: str, today: date | None = N
             top = app.overlaps[0]
             decision.reasons = [
                 *reasons,
-                f"Контур пересекается с полем другого хозяйства: {top['overlap_ha']:g} га "
+                f"Контур пересекается с полем другого хозяйства: {top['overlap_ha']:.1f} га "
                 f"({top['share']:.0%} участка) — нужна проверка документов на землю",
             ]
             decision.approved_amount = 0

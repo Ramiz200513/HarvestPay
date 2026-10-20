@@ -62,12 +62,45 @@ function ScoreBreakdown({ app }: { app: Application }) {
   );
 }
 
+function OverlapsBlock({ app }: { app: Application }) {
+  if (app.overlaps.length === 0) return null;
+  const forAnalyst = app.overlaps.some((o) => o.farm_bin !== null);
+  return (
+    <section className="card overlaps">
+      <h3>Пересечение с полями других хозяйств</h3>
+      {forAnalyst ? (
+        <table className="table">
+          <tbody>
+            {app.overlaps.map((o) => (
+              <tr key={o.farm_bin ?? o.overlap_ha}>
+                <td>
+                  {o.farm_name} <span className="muted mono">БИН {o.farm_bin}</span>
+                </td>
+                <td className="num">{formatHa(o.overlap_ha)}</td>
+                <td className="num">{Math.round(o.share * 100)}% поля</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <p>
+          Участок пересекается с полем, которое уже заявляло другое хозяйство ({formatHa(app.overlaps[0].overlap_ha)}).
+          Аналитик свяжется с вами и попросит документы на право пользования землёй.
+        </p>
+      )}
+      {forAnalyst && <p className="muted">На карте чужие поля — красным пунктиром.</p>}
+    </section>
+  );
+}
+
 export default function ApplicationDetails({ app }: { app: Application }) {
   const d = app.decision;
   const ring = app.field.geometry.coordinates[0];
+  const others = app.overlaps.flatMap((o) => (o.geometry ? [o.geometry] : []));
 
   return (
     <div className="details">
+      <OverlapsBlock app={app} />
       {d && (
         <section className="card decision">
           <div className="decision-head">
@@ -78,7 +111,11 @@ export default function ApplicationDetails({ app }: { app: Application }) {
                 {d.score !== null && <span className="muted"> · индекс стабильности {d.score} / 100</span>}
               </div>
               <div className="muted">
-                {d.decided_by === "analyst" ? "Решение принял кредитный аналитик" : "Решение принято автоматически"}
+                {d.decided_by === "analyst"
+                  ? "Решение принял кредитный аналитик"
+                  : app.status === "review"
+                    ? "Автоматическая оценка · окончательное решение за аналитиком"
+                    : "Решение принято автоматически"}
               </div>
             </div>
           </div>
@@ -156,7 +193,7 @@ export default function ApplicationDetails({ app }: { app: Application }) {
           </table>
         </div>
         {/* key: при выборе другой заявки карта создаётся заново и приближается к новому полю */}
-        <FieldMap key={app.id} points={ring.slice(0, -1)} height={300} />
+        <FieldMap key={app.id} points={ring.slice(0, -1)} height={300} others={others} />
       </section>
     </div>
   );

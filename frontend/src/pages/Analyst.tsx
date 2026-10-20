@@ -158,7 +158,10 @@ export default function Analyst() {
             >
               <div className="list-item-head">
                 <b>{a.farm_name}</b>
-                {a.score_class && <ClassBadge value={a.score_class} />}
+                <span className="list-item-badges">
+                  {a.has_overlaps && <span className="pill pill-rejected">пересечение</span>}
+                  {a.score_class && <ClassBadge value={a.score_class} />}
+                </span>
               </div>
               <div className="muted">
                 {a.crop} · {formatHa(a.area_ha)} · {formatKzt(a.requested_amount)}

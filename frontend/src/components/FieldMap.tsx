@@ -15,7 +15,7 @@ import {
   useMapEvents,
 } from "react-leaflet";
 import type { LatLngTuple } from "leaflet";
-import type { LngLat } from "../types";
+import type { GeoPolygon, LngLat } from "../types";
 
 const DEFAULT_CENTER: LatLngTuple = [51.25, 71.2]; // пашни под Астаной
 const toLatLng = ([lng, lat]: LngLat): LatLngTuple => [lat, lng];
@@ -42,9 +42,10 @@ interface Props {
   points: LngLat[];
   onChange?: (points: LngLat[]) => void;
   height?: number;
+  others?: GeoPolygon[]; // поля других хозяйств, с которыми есть пересечение (видит аналитик)
 }
 
-export default function FieldMap({ points, onChange, height = 420 }: Props) {
+export default function FieldMap({ points, onChange, height = 420, others = [] }: Props) {
   const editable = Boolean(onChange);
   const latlngs = points.map(toLatLng);
 
@@ -63,6 +64,14 @@ export default function FieldMap({ points, onChange, height = 420 }: Props) {
         />
         {editable && onChange && <ClickToAdd onAdd={(p) => onChange([...points, p])} />}
         <FitTo points={points} />
+
+        {others.map((g, i) => (
+          <Polygon
+            key={`other-${i}`}
+            positions={g.coordinates[0].map(toLatLng)}
+            pathOptions={{ color: "#E5484D", weight: 2, dashArray: "6 6", fillOpacity: 0.12 }}
+          />
+        ))}
 
         {latlngs.length >= 3 ? (
           <Polygon positions={latlngs} pathOptions={{ color: "#E3A72F", weight: 2, fillOpacity: 0.18 }} />
