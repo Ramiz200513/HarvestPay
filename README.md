@@ -124,14 +124,29 @@ alembic upgrade head                                 # применить
 
 ## Запуск через Docker (как в продакшене)
 
+Нужен только [Docker Desktop](https://www.docker.com/products/docker-desktop/). На Windows — скрипт `hp.cmd`
+в корне проекта (сам запустит Docker Desktop, создаст `.env` из `.env.example`, соберёт образы и дождётся API):
+
 ```powershell
-docker compose up --build
+.\hp.cmd              # поднять всё в фоне (то же, что .\hp.cmd up)
+.\hp.cmd logs         # логи всех сервисов; .\hp.cmd logs api — одного
+.\hp.cmd ps           # состояние контейнеров
+.\hp.cmd down         # остановить (база сохраняется)
+.\hp.cmd reset        # остановить и удалить базу со всеми заявками
+```
+
+На macOS/Linux или вручную — то же самое через compose:
+
+```bash
+cp .env.example .env
+docker compose up --build -d
 ```
 
 - Сайт: http://localhost:8080
 - API: http://localhost:8000/docs
 
 Здесь уже настоящая архитектура из проекта: PostgreSQL с PostGIS, очередь Redis и отдельный Celery-воркер.
+После правки кода достаточно снова выполнить `.\hp.cmd` — пересоберутся только изменённые образы.
 
 ---
 

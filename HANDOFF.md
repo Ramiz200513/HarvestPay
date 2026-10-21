@@ -141,9 +141,11 @@ Redis не нужен, расчёт идёт в фоне внутри проце
 ### Через Docker (полная архитектура)
 
 ```powershell
-docker compose up --build
+.\hp.cmd          # или: docker compose up --build -d  (команды: up, down, logs, ps, reset)
 ```
 Сайт: http://localhost:8080 · API: http://localhost:8000/docs
+(порты меняются в `.env`: `HP_WEB_PORT`, `HP_API_PORT` — на этом компьютере 8080 занят
+контейнером `jarvis-relay`, поэтому в локальном `.env` стоит `HP_WEB_PORT=8081`)
 Поднимаются PostgreSQL+PostGIS, Redis, API, Celery-воркер и nginx с собранным сайтом.
 
 ### Тесты

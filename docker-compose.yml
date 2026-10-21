@@ -1,8 +1,10 @@
-# Полный стенд одной командой:  docker compose up --build
+# Полный стенд одной командой:  docker compose up --build   (или .\hp.cmd на Windows)
 # Сайт: http://localhost:8080   API и Swagger: http://localhost:8000/docs
+# Порты меняются в .env: HP_WEB_PORT и HP_API_PORT (если 8080/8000 заняты другим проектом)
 services:
   db:
     image: postgis/postgis:16-3.4-alpine   # PostgreSQL + расширение PostGIS
+    restart: unless-stopped
     environment:
       POSTGRES_DB: harvestpay
       POSTGRES_USER: harvestpay
@@ -16,9 +18,15 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
 
   api:
     build: ./backend
+    restart: unless-stopped
     environment: &backend-env
       HP_DATABASE_URL: postgresql+psycopg://harvestpay:harvestpay@db:5432/harvestpay
       HP_TASK_MODE: celery
@@ -29,32 +37,42 @@ services:
       HP_GEE_SERVICE_ACCOUNT: ${HP_GEE_SERVICE_ACCOUNT:-}
       HP_GEE_KEY_FILE: ${HP_GEE_KEY_FILE:-}
       HP_ANALYST_TOKEN: ${HP_ANALYST_TOKEN:-analyst-demo-token}
-      HP_CORS_ORIGINS: '["http://localhost:8080"]'
+      HP_CORS_ORIGINS: '["http://localhost:${HP_WEB_PORT:-8080}"]'
     volumes:
       - ./secrets:/secrets:ro   # сюда кладётся JSON-ключ сервисного аккаунта GEE
     depends_on:
       db:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:   # в slim-образе нет curl — проверяем через Python
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
     ports:
-      - "8000:8000"
+      - "${HP_API_PORT:-8000}:8000"
 
   worker:
     build: ./backend
     command: celery -A app.worker worker --loglevel=info --concurrency=2
+    restart: unless-stopped
     environment: *backend-env
     volumes:
       - ./secrets:/secrets:ro
     depends_on:
-      - api   # API при старте создаёт таблицы — воркер стартует после него
+      api:
+        condition: service_healthy   # API при старте применяет миграции — воркер ждёт готовую схему
 
   web:
     build: ./frontend
+    restart: unless-stopped
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     ports:
-      - "8080:80"
+      - "${HP_WEB_PORT:-8080}:80"
 
 volumes:
   pgdata:
