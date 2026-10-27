@@ -152,8 +152,9 @@ export default function Apply() {
 
       {config?.satellite_provider === "mock" && (
         <p className="notice">
-          Демо-режим: спутниковые данные синтетические (детерминированы по координатам поля). Для реальных снимков
-          подключите Google Earth Engine — см. README.
+          Демо-режим: спутниковые данные синтетические (детерминированы по координатам поля)
+          {config.climate_provider === "openmeteo" && ", климат района — настоящий (Open-Meteo)"}. Для реальных
+          снимков подключите Copernicus Data Space или Google Earth Engine — см. README.
         </p>
       )}
 

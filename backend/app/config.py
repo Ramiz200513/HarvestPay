@@ -19,10 +19,16 @@ class Settings(BaseSettings):
     task_mode: Literal["background", "celery"] = "background"
     redis_url: str = "redis://localhost:6379/0"
 
-    satellite_provider: Literal["mock", "gee"] = "mock"
+    # mock — демо; gee — Google Earth Engine; cdse — Copernicus Data Space (бесплатно, без Google)
+    satellite_provider: Literal["mock", "gee", "cdse"] = "mock"
     gee_project: str | None = None
     gee_service_account: str | None = None
     gee_key_file: str | None = None
+    cdse_client_id: str | None = None
+    cdse_client_secret: str | None = None
+    # Климат и влажность почвы из Open-Meteo (бесплатно, без ключа): заменяет синтетический климат демо-режима
+    # и дополняет то, чего не вернул спутниковый провайдер. off — не ходить в интернет за климатом.
+    climate_provider: Literal["openmeteo", "off"] = "openmeteo"
     seasons: int = 7
 
     registry_provider: Literal["mock", "statgov"] = "mock"

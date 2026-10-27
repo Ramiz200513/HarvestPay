@@ -26,6 +26,7 @@ else:
     os.environ["HP_DATABASE_URL"] = f"sqlite:///{tempfile.mkdtemp()}/test.db"
 os.environ["HP_TASK_MODE"] = "background"
 os.environ["HP_SATELLITE_PROVIDER"] = "mock"
+os.environ["HP_CLIMATE_PROVIDER"] = "off"  # тесты не ходят в интернет
 os.environ["HP_REGISTRY_PROVIDER"] = "mock"
 os.environ["HP_ANALYST_TOKEN"] = "test-token"
 

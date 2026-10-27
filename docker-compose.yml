@@ -39,6 +39,9 @@ services:
       HP_GEE_PROJECT: ${HP_GEE_PROJECT:-}
       HP_GEE_SERVICE_ACCOUNT: ${HP_GEE_SERVICE_ACCOUNT:-}
       HP_GEE_KEY_FILE: ${HP_GEE_KEY_FILE:-}
+      HP_CDSE_CLIENT_ID: ${HP_CDSE_CLIENT_ID:-}
+      HP_CDSE_CLIENT_SECRET: ${HP_CDSE_CLIENT_SECRET:-}
+      HP_CLIMATE_PROVIDER: ${HP_CLIMATE_PROVIDER:-openmeteo}
       HP_ANALYST_TOKEN: ${HP_ANALYST_TOKEN:-analyst-demo-token}
       HP_CORS_ORIGINS: '["http://localhost:${HP_WEB_PORT:-8080}"]'
     volumes:

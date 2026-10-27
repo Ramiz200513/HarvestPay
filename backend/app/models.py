@@ -103,7 +103,7 @@ class FieldSeason(Base):
     # Климат сезона (ERA5-Land): дни заморозков после сева и дни жары ≥ 35 °C в июне–июле
     frost_days: Mapped[int | None] = mapped_column(Integer)
     heat_days: Mapped[int | None] = mapped_column(Integer)
-    source: Mapped[str] = mapped_column(String(20))  # mock | gee
+    source: Mapped[str] = mapped_column(String(20))  # mock | gee | cdse
 
     field: Mapped[Field] = relationship(back_populates="seasons")
 

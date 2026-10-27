@@ -252,7 +252,8 @@ export interface Portfolio {
 }
 
 export interface PublicConfig {
-  satellite_provider: "mock" | "gee";
+  satellite_provider: "mock" | "gee" | "cdse";
+  climate_provider: "openmeteo" | "off";
   registry_provider: "mock" | "statgov";
   seasons: number;
   limit_per_ha: number;

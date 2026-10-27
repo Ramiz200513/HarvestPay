@@ -55,6 +55,7 @@ def public_config() -> dict:
     """Какие источники данных включены — фронтенд честно показывает плашку «демо-данные»."""
     return {
         "satellite_provider": settings.satellite_provider,
+        "climate_provider": settings.climate_provider,
         "registry_provider": settings.registry_provider,
         "seasons": settings.seasons,
         "limit_per_ha": settings.limit_per_ha,

@@ -13,8 +13,11 @@ Open-Meteo отдаёт реанализ ERA5 / ERA5-Land (тот же, что �
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import date
+
+log = logging.getLogger(__name__)
 
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 FROST_C, HEAT_C = -2.0, 35.0
@@ -82,3 +85,59 @@ def fetch_climate(lat: float, lon: float, years: list[int], client, timeout: flo
     )
     resp.raise_for_status()
     return parse_daily(resp.json(), years)
+
+
+def field_center(geometry: dict) -> tuple[float, float]:
+    """Центр поля (lat, lon) — среднее вершин контура; для сетки 9–11 км точнее не нужно."""
+    ring = geometry["coordinates"][0][:-1]
+    return sum(p[1] for p in ring) / len(ring), sum(p[0] for p in ring) / len(ring)
+
+
+class WithOpenMeteoClimate:
+    """Обёртка над спутниковым провайдером: климат и влажность почвы берём из Open-Meteo.
+
+    * Демо-провайдер (mock) — его климат синтетический, поэтому заменяем его настоящим.
+    * Настоящий провайдер (gee, cdse) — дополняем только то, чего он не вернул (None):
+      например, у GEE не нашлось снимков радара, а CDSE-провайдер климат не считает вовсе.
+    Если Open-Meteo недоступен, заявка не падает: остаются данные основного провайдера.
+    NDVI обёртка не трогает — его даёт только спутник.
+    """
+
+    def __init__(self, primary, client_factory=None, timeout: float = 60.0) -> None:  # первый запрос бывает до 40 с
+        self.primary = primary
+        self.name = primary.name  # источник NDVI — по нему видно, демо это или настоящий спутник
+        self.override = primary.name == "mock"
+        self.timeout = timeout
+        self._client_factory = client_factory
+
+    def _client(self):
+        if self._client_factory is not None:
+            return self._client_factory()
+        import httpx
+
+        return httpx.Client()
+
+    def fetch_seasons(self, geometry: dict, years: list[int]):
+        seasons = self.primary.fetch_seasons(geometry, years)
+        if not self.override and all(
+            s.frost_days is not None and s.heat_days is not None and s.soil_moisture is not None for s in seasons
+        ):
+            return seasons  # основной провайдер вернул всё сам — лишний запрос не нужен
+        try:
+            with self._client() as client:
+                climate = fetch_climate(*field_center(geometry), years, client, timeout=self.timeout)
+        except Exception:  # noqa: BLE001 — без климата скоринг всё равно работает, штраф просто не начисляется
+            log.warning("Open-Meteo недоступен — климат остаётся от провайдера %s", self.primary.name, exc_info=True)
+            return seasons
+        for s in seasons:
+            c = climate.get(s.year)
+            if c is None:
+                continue
+            for attr in ("frost_days", "heat_days", "soil_moisture"):
+                value = getattr(c, attr)
+                if value is not None and (self.override or getattr(s, attr) is None):
+                    setattr(s, attr, value)
+        return seasons
+
+    def fetch_timeline(self, geometry: dict, start: date, end: date) -> list[dict]:
+        return self.primary.fetch_timeline(geometry, start, end)
