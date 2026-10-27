@@ -1,4 +1,7 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+import logging
+from datetime import date
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -12,6 +15,8 @@ from ..schemas import (
     OverlapCheckOut,
     ProductOut,
 )
+from ..services import imagery
+from ..services.errors import describe_external_error
 from ..services.geo import GeometryError, parse_field_geometry
 from ..services.overlap import find_overlaps
 from ..tasks import enqueue_application
@@ -19,6 +24,8 @@ from .farms import verify_and_store
 from .serializers import application_out, overlap_out, product_out
 
 router = APIRouter(prefix="/api", tags=["Заявки"])
+log = logging.getLogger(__name__)
+FIRST_SENTINEL2_YEAR = 2017  # Sentinel-2 L2A по Казахстану — с 2017 года
 
 
 @router.get("/products", response_model=list[ProductOut], summary="Каталог товаров для рассрочки")
@@ -111,3 +118,55 @@ def get_application(application_id: str, db: Session = Depends(get_db)) -> Appli
     if app is None:
         raise HTTPException(status_code=404, detail="Заявка не найдена")
     return application_out(app)
+
+
+def _field_geometry(db: Session, application_id: str) -> dict:
+    app = db.get(Application, application_id)
+    if app is None:
+        raise HTTPException(status_code=404, detail="Заявка не найдена")
+    return app.field.geometry
+
+
+@router.get("/applications/{application_id}/imagery", summary="Безоблачные снимки поля за сезон")
+def field_imagery(
+    application_id: str, year: int = Query(ge=FIRST_SENTINEL2_YEAR), db: Session = Depends(get_db)
+) -> dict:
+    """Даты безоблачных снимков Sentinel-2 за сезон (апрель–сентябрь) с NDVI поля и долей видимой площади.
+    Если снимки недоступны (демо-режим), отвечает available=false и объясняет почему — это не ошибка."""
+    if year > date.today().year:
+        raise HTTPException(status_code=422, detail={"message": "Сезон ещё не начался", "reasons": []})
+    geometry = _field_geometry(db, application_id)
+    try:
+        scenes = imagery.season_scenes(geometry, year)
+    except imagery.ImageryUnavailable as exc:
+        return {"available": False, "message": str(exc), "year": year, "scenes": []}
+    except Exception as exc:  # noqa: BLE001 — сбой внешнего сервиса показываем человеческим текстом
+        log.exception("Снимки поля %s за %s", application_id, year)
+        raise HTTPException(status_code=502, detail={"message": describe_external_error(exc), "reasons": []}) from exc
+    return {"available": True, "year": year, "bbox": imagery.image_bbox(geometry), "scenes": scenes}
+
+
+@router.get(
+    "/applications/{application_id}/imagery/{day}.png",
+    summary="Снимок поля за день (PNG)",
+    response_class=Response,
+    responses={200: {"content": {"image/png": {}}}},
+)
+def field_image(
+    application_id: str,
+    day: date,
+    mode: str = Query("color", pattern="^(color|ndvi)$"),
+    db: Session = Depends(get_db),
+) -> Response:
+    if not date(FIRST_SENTINEL2_YEAR, 1, 1) <= day <= date.today():
+        raise HTTPException(status_code=422, detail={"message": "Снимков за эту дату нет", "reasons": []})
+    geometry = _field_geometry(db, application_id)
+    try:
+        png = imagery.field_image(geometry, day, mode)
+    except imagery.ImageryUnavailable as exc:
+        raise HTTPException(status_code=409, detail={"message": str(exc), "reasons": []}) from exc
+    except Exception as exc:  # noqa: BLE001
+        log.exception("Снимок поля %s за %s", application_id, day)
+        raise HTTPException(status_code=502, detail={"message": describe_external_error(exc), "reasons": []}) from exc
+    # Снимок прошлой даты не меняется — пусть браузер держит его в кэше
+    return Response(png, media_type="image/png", headers={"Cache-Control": "public, max-age=2592000"})

@@ -31,7 +31,7 @@ export default function App() {
       </main>
 
       <footer className="footer">
-        <div className="container">Harvest Pay · учебный проект · спутниковые данные: Copernicus Sentinel-1/2 через Google Earth Engine</div>
+        <div className="container">Harvest Pay · учебный проект · снимки: Copernicus Sentinel-2 · климат: Open-Meteo (ERA5-Land)</div>
       </footer>
     </>
   );

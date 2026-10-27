@@ -44,6 +44,21 @@ export interface Season {
   scenes: number;
   frost_days: number | null;
   heat_days: number | null;
+  source?: string | null; // mock | cdse | gee — откуда NDVI
+}
+
+export interface ImageryScene {
+  date: string;
+  ndvi: number;
+  clear: number; // доля поля, видимая без облаков, 0..1
+}
+
+export interface FieldImagery {
+  available: boolean;
+  message?: string;
+  year: number;
+  bbox?: [number, number, number, number]; // [minLon, minLat, maxLon, maxLat] — рамка снимка
+  scenes: ImageryScene[];
 }
 
 export interface Payment {
@@ -258,4 +273,5 @@ export interface PublicConfig {
   seasons: number;
   limit_per_ha: number;
   max_limit_a: number;
+  max_limit_b: number;
 }

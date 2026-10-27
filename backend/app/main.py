@@ -60,4 +60,5 @@ def public_config() -> dict:
         "seasons": settings.seasons,
         "limit_per_ha": settings.limit_per_ha,
         "max_limit_a": settings.max_limit_a,
+        "max_limit_b": settings.max_limit_b,
     }

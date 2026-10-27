@@ -266,3 +266,18 @@ def test_deal_steps_monitoring_and_portfolio(client):
 
 def test_deal_endpoints_require_token(client):
     assert client.get("/api/analyst/portfolio").status_code == 401
+
+
+def test_imagery_in_demo_mode_explains_why_unavailable(client):
+    app_id = submit(client).json()["id"]
+    data = client.get(f"/api/applications/{app_id}/imagery", params={"year": 2024}).json()
+    assert data["available"] is False and "Copernicus" in data["message"]
+    assert client.get(f"/api/applications/{app_id}/imagery/2024-07-01.png").status_code == 409
+
+
+def test_imagery_validates_input(client):
+    app_id = submit(client).json()["id"]
+    assert client.get(f"/api/applications/{app_id}/imagery", params={"year": 2010}).status_code == 422
+    assert client.get(f"/api/applications/{app_id}/imagery/2010-07-01.png").status_code == 422
+    assert client.get(f"/api/applications/{app_id}/imagery/2024-07-01.png", params={"mode": "x"}).status_code == 422
+    assert client.get("/api/applications/nope/imagery", params={"year": 2024}).status_code == 404

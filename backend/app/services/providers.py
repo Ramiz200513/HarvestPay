@@ -42,6 +42,13 @@ def _ndvi_provider() -> SatelliteProvider:
     return MockSatelliteProvider()
 
 
+def get_imagery_provider():
+    """Провайдер, который умеет отдавать сами снимки (сейчас только CDSE), или None."""
+    provider = get_satellite_provider()
+    provider = getattr(provider, "primary", provider)  # снимаем обёртку Open-Meteo
+    return provider if hasattr(provider, "fetch_image") else None
+
+
 @lru_cache
 def get_satellite_provider() -> SatelliteProvider:
     provider = _ndvi_provider()

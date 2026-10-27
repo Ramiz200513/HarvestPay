@@ -181,3 +181,62 @@ def test_cdse_provider_gets_token_once_and_queries_each_season():
     body = stat_calls[0][2]["json"]
     assert body["input"]["bounds"]["geometry"] == SQUARE
     assert body["aggregation"]["timeRange"] == {"from": "2023-04-01T00:00:00Z", "to": "2023-10-01T00:00:00Z"}
+
+
+class BinaryResponse(FakeResponse):
+    content = b"\x89PNG..."
+
+
+def test_cdse_image_request_frames_field_and_keeps_proportions():
+    from app.services.satellite.cdse import image_bbox, image_request
+
+    bbox = image_bbox(SQUARE)
+    lons = [p[0] for p in SQUARE["coordinates"][0]]
+    lats = [p[1] for p in SQUARE["coordinates"][0]]
+    assert bbox[0] < min(lons) and bbox[2] > max(lons) and bbox[1] < min(lats) and bbox[3] > max(lats)
+
+    body = image_request(SQUARE, date(2024, 7, 1), "ndvi")
+    assert body["input"]["bounds"]["bbox"] == bbox
+    time_range = body["input"]["data"][0]["dataFilter"]["timeRange"]
+    assert time_range == {"from": "2024-07-01T00:00:00Z", "to": "2024-07-02T00:00:00Z"}
+    out = body["output"]
+    # Рамка около 1,4 × 1,0 км на местности → картинка примерно такой же пропорции
+    assert out["width"] == 640 and 350 < out["height"] < 560
+    assert "colorBlend" in body["evalscript"]
+
+
+def test_cdse_fetch_image_and_scene_list():
+    token = {"access_token": "t", "expires_in": 600}
+    stats = {"data": [stats_item("2024-06-01", 0.6), stats_item("2024-06-11", 0.7, nodata=200)]}
+    client = FakeClient(post=[token, stats])
+    provider = CdseSatelliteProvider("id", "secret", client_factory=lambda: client)
+    scenes = provider.fetch_scene_list(SQUARE, date(2024, 4, 1), date(2024, 9, 30))
+    assert scenes == [
+        {"date": "2024-06-01", "ndvi": 0.6, "clear": 1.0},
+        {"date": "2024-06-11", "ndvi": 0.7, "clear": 0.8},
+    ]
+
+    client.post_bodies.append(None)
+    client.post = lambda url, **kw: client.calls.append(("POST", url, kw)) or BinaryResponse(None)
+    assert provider.fetch_image(SQUARE, date(2024, 6, 1), "color") == b"\x89PNG..."
+    assert client.calls[-1][1].endswith("/process")
+    with pytest.raises(ValueError):
+        provider.fetch_image(SQUARE, date(2024, 6, 1), "infrared")
+
+
+def test_external_errors_are_human_readable():
+    import httpx
+
+    from app.services.errors import describe_external_error
+
+    request = httpx.Request("POST", "https://example.test")
+
+    def status(code):
+        return httpx.HTTPStatusError("x", request=request, response=httpx.Response(code, request=request))
+
+    assert "ключ" in describe_external_error(status(401))
+    assert "минуту" in describe_external_error(status(429))
+    assert "временно не работает" in describe_external_error(status(503))
+    assert "не ответил" in describe_external_error(httpx.ReadTimeout("t", request=request))
+    assert "интернет" in describe_external_error(httpx.ConnectError("c", request=request))
+    assert describe_external_error(RuntimeError("Нужно задать HP_X")) == "Нужно задать HP_X"

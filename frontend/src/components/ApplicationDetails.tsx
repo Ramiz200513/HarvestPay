@@ -6,6 +6,7 @@ import ChecksList from "./ChecksList";
 import { DealSummary } from "./DealPanel";
 import FieldMap from "./FieldMap";
 import NdviChart from "./NdviChart";
+import SatelliteViewer from "./SatelliteViewer";
 
 export function StatusPill({ status }: { status: Application["status"] }) {
   return <span className={`pill pill-${status}`}>{STATUS_LABEL[status]}</span>;
@@ -185,6 +186,8 @@ export default function ApplicationDetails({ app }: { app: Application }) {
           <NdviChart seasons={app.seasons} />
         </section>
       )}
+
+      {app.seasons.length > 0 && <SatelliteViewer app={app} />}
 
       <section className="card two-col">
         <div>

@@ -1,17 +1,21 @@
-// Мастер подачи заявки: 1) БИН → 2) поле на карте → 3) товары → отправка.
-// Состояние всех шагов живёт здесь, в одном компоненте, поэтому при переходе «Назад» ничего не теряется.
+// Мастер подачи заявки: 1) БИН → 2) поле на карте → 3) товары → 4) проверка и отправка.
+// Состояние всех шагов живёт здесь, в одном компоненте, поэтому при переходе «Назад» ничего не теряется,
+// а черновик сохраняется в браузере — после обновления страницы фермер продолжит с того же места.
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ApiError, api } from "../api";
 import ChecksList from "../components/ChecksList";
 import FieldMap from "../components/FieldMap";
+import MapSearch, { type MapFocus } from "../components/MapSearch";
 import { CATEGORY_LABEL, formatHa, formatKzt } from "../lib/format";
 import { closeRing, ringAreaHa } from "../lib/geo";
 import { readFieldFile } from "../lib/kml";
-import { rememberApplication } from "../lib/storage";
+import { loadDraft, rememberApplication, saveDraft } from "../lib/storage";
 import type { Farm, FieldCheck, LngLat, Product, PublicConfig } from "../types";
 
 const CROPS = ["Пшеница яровая", "Ячмень", "Подсолнечник", "Рапс", "Лён масличный", "Овёс"];
+const STEPS = ["Хозяйство", "Поле", "Товары", "Проверка"];
+const CLASS_B_SHARE = 0.6; // класс B получает 60% лимита — как в backend/app/services/limits.py
 
 const DEMO_BINS = [
   { bin: "150343000016", note: "КХ, проходит проверку" },
@@ -24,28 +28,57 @@ const DEMO_BINS = [
   { bin: "260440000016", note: "зарегистрировано недавно — отказ" },
 ];
 
+// Сумма заявки на фоне лимитов: видно заранее, уложится ли фермер в лимит при классе A и B
+function LimitMeter({ total, limitA, limitB }: { total: number; limitA: number; limitB: number }) {
+  const scale = Math.max(total, limitA) * 1.08 || 1;
+  const pct = (v: number) => `${Math.min(100, (v / scale) * 100)}%`;
+  const state = total <= limitB ? "ok" : total <= limitA ? "mid" : "over";
+  return (
+    <div className="limit-meter">
+      <div className="limit-track">
+        <div className={`limit-fill ${state}`} style={{ width: pct(total) }} />
+        <div className="limit-mark below" style={{ left: pct(limitB) }}>
+          <span>B · {formatKzt(limitB)}</span>
+        </div>
+        <div className="limit-mark" style={{ left: pct(limitA) }}>
+          <span>A · {formatKzt(limitA)}</span>
+        </div>
+      </div>
+      <p className={`small limit-note ${state}`}>
+        {state === "ok" && "Сумма укладывается в лимит и при классе A, и при классе B."}
+        {state === "mid" &&
+          "При классе A одобрим всю сумму, при классе B — только до отметки B. Можно уменьшить заказ или подать как есть."}
+        {state === "over" &&
+          "Сумма больше максимального лимита для этого поля: одобрим не больше отметки A. Уменьшите заказ или добавьте поле отдельной заявкой."}
+      </p>
+    </div>
+  );
+}
+
 export default function Apply() {
   const navigate = useNavigate();
-  const [step, setStep] = useState(1);
+  const draft = useMemo(loadDraft, []);
+  const [step, setStep] = useState(draft?.step ?? 1);
   const [config, setConfig] = useState<PublicConfig | null>(null);
 
   // шаг 1
-  const [bin, setBin] = useState("");
-  const [farm, setFarm] = useState<Farm | null>(null);
+  const [bin, setBin] = useState(draft?.bin ?? "");
+  const [farm, setFarm] = useState<Farm | null>(draft?.farm ?? null);
   const [checking, setChecking] = useState(false);
 
   // шаг 2
-  const [points, setPoints] = useState<LngLat[]>([]);
-  const [crop, setCrop] = useState(CROPS[0]);
-  const [cadastral, setCadastral] = useState("");
+  const [points, setPoints] = useState<LngLat[]>(draft?.points ?? []);
+  const [crop, setCrop] = useState(draft?.crop ?? CROPS[0]);
+  const [cadastral, setCadastral] = useState(draft?.cadastral ?? "");
   const [importNote, setImportNote] = useState<string | null>(null);
   const [mapKey, setMapKey] = useState(0); // смена key пересоздаёт карту — она приблизится к загруженному полю
+  const [focus, setFocus] = useState<MapFocus | undefined>();
   const [fieldCheck, setFieldCheck] = useState<FieldCheck | null>(null);
   const [fieldError, setFieldError] = useState<string | null>(null);
 
   // шаг 3
   const [products, setProducts] = useState<Product[]>([]);
-  const [qty, setQty] = useState<Record<number, number>>({});
+  const [qty, setQty] = useState<Record<number, number>>(draft?.qty ?? {});
 
   const [error, setError] = useState<{ message: string; reasons: string[] } | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -54,6 +87,10 @@ export default function Apply() {
     api.config().then(setConfig).catch(() => setConfig(null));
     api.products().then(setProducts).catch(() => setProducts([]));
   }, []);
+
+  useEffect(() => {
+    if (!submitting) saveDraft({ step, bin, farm, points, crop, cadastral, qty });
+  }, [step, bin, farm, points, crop, cadastral, qty, submitting]);
 
   const areaHa = useMemo(() => ringAreaHa(points), [points]);
 
@@ -71,8 +108,19 @@ export default function Apply() {
     }, 600);
     return () => window.clearTimeout(timer);
   }, [points, farm?.bin]);
-  const total = products.reduce((sum, p) => sum + (qty[p.id] ?? 0) * p.price, 0);
-  const estimatedLimit = config ? Math.round((areaHa * config.limit_per_ha) / 1000) * 1000 : 0;
+
+  const chosen = products.filter((p) => (qty[p.id] ?? 0) > 0);
+  const total = chosen.reduce((sum, p) => sum + qty[p.id] * p.price, 0);
+  const rawLimit = config ? Math.round((areaHa * config.limit_per_ha) / 1000) * 1000 : 0;
+  const limitA = config ? Math.min(rawLimit, config.max_limit_a) : 0;
+  const limitB = config ? Math.min(Math.round((rawLimit * CLASS_B_SHARE) / 1000) * 1000, config.max_limit_b) : 0;
+
+  // На какой шаг можно перейти прямо сейчас: только на пройденные и следующий за ними
+  const canOpen = (n: number) =>
+    n === 1 ||
+    (n === 2 && farm?.status === "verified") ||
+    (n === 3 && farm?.status === "verified" && points.length >= 3 && areaHa >= 1 && !fieldError) ||
+    (n === 4 && farm?.status === "verified" && points.length >= 3 && total > 0);
 
   async function importFile(file: File | undefined) {
     if (!file) return;
@@ -93,7 +141,7 @@ export default function Apply() {
 
   function showError(e: unknown) {
     if (e instanceof ApiError) setError({ message: e.message, reasons: e.reasons });
-    else setError({ message: "Сервер недоступен. Запущен ли бэкенд?", reasons: [] });
+    else setError({ message: "Нет связи с сервером. Проверьте интернет и попробуйте ещё раз.", reasons: [] });
   }
 
   async function checkBin(value = bin) {
@@ -109,14 +157,24 @@ export default function Apply() {
     }
   }
 
+  function startOver() {
+    saveDraft(null);
+    setStep(1);
+    setBin("");
+    setFarm(null);
+    setPoints([]);
+    setCrop(CROPS[0]);
+    setCadastral("");
+    setQty({});
+    setError(null);
+    setMapKey((k) => k + 1);
+  }
+
   async function submit() {
     if (!farm) return;
     setError(null);
     setSubmitting(true);
     try {
-      const items = Object.entries(qty)
-        .filter(([, q]) => q > 0)
-        .map(([id, q]) => ({ product_id: Number(id), quantity: q }));
       const res = await api.createApplication({
         bin: farm.bin,
         field: {
@@ -124,8 +182,9 @@ export default function Apply() {
           crop,
           cadastral_number: cadastral.trim() || undefined,
         },
-        items,
+        items: chosen.map((p) => ({ product_id: p.id, quantity: qty[p.id] })),
       });
+      saveDraft(null);
       rememberApplication({ id: res.id, farm: farm.name ?? farm.bin, createdAt: new Date().toISOString() });
       navigate(`/applications/${res.id}`);
     } catch (e) {
@@ -138,16 +197,30 @@ export default function Apply() {
     (acc[p.category] ??= []).push(p);
     return acc;
   }, {});
+  const hasDraft = Boolean(bin || points.length || chosen.length);
 
   return (
     <div className="container page">
-      <h1>Заявка на рассрочку</h1>
+      <div className="page-head">
+        <h1>Заявка на рассрочку</h1>
+        {hasDraft && (
+          <button className="btn btn-ghost small-btn" onClick={startOver}>
+            Начать заново
+          </button>
+        )}
+      </div>
       <ol className="stepper">
-        {["Хозяйство", "Поле", "Товары"].map((label, i) => (
-          <li key={label} className={step === i + 1 ? "active" : step > i + 1 ? "done" : ""}>
-            <span>{i + 1}</span> {label}
-          </li>
-        ))}
+        {STEPS.map((label, i) => {
+          const n = i + 1;
+          const state = step === n ? "active" : step > n ? "done" : "";
+          return (
+            <li key={label} className={state}>
+              <button type="button" disabled={step === n || !canOpen(n)} onClick={() => setStep(n)}>
+                <span>{step > n ? "✓" : n}</span> {label}
+              </button>
+            </li>
+          );
+        })}
       </ol>
 
       {config?.satellite_provider === "mock" && (
@@ -187,10 +260,15 @@ export default function Apply() {
               onChange={(e) => setBin(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && checkBin()}
             />
-            <button className="btn btn-primary" disabled={checking || bin.replace(/\s/g, "").length !== 12} onClick={() => checkBin()}>
+            <button
+              className="btn btn-primary"
+              disabled={checking || bin.replace(/\s/g, "").length !== 12}
+              onClick={() => checkBin()}
+            >
               {checking ? "Проверяем…" : "Проверить"}
             </button>
           </div>
+          <p className="muted small">БИН есть в свидетельстве о регистрации и на egov.kz — 12 цифр.</p>
 
           {config?.registry_provider === "mock" && (
             <div className="demo-bins">
@@ -242,8 +320,8 @@ export default function Apply() {
         <section className="card">
           <div className="field-intro">
             <p>
-              Кликайте по углам поля на снимке — контур замкнётся автоматически. Колесо мыши — приблизить. Или
-              загрузите готовые границы из Google Earth или агросервиса.
+              Найдите своё поле — по названию села или координатам — и кликайте по его углам на снимке: контур замкнётся
+              автоматически. Или загрузите готовые границы из Google Earth или агросервиса.
             </p>
             <label className="btn btn-ghost file-btn">
               Загрузить KML / GeoJSON
@@ -257,11 +335,13 @@ export default function Apply() {
               />
             </label>
           </div>
+          <MapSearch onFocus={(f) => setFocus({ ...f, seq: Date.now() })} />
           {importNote && <p className="notice">{importNote}</p>}
-          <FieldMap key={mapKey} points={points} onChange={setPoints} />
+          <FieldMap key={mapKey} points={points} onChange={setPoints} focus={focus} />
           <div className="map-toolbar">
             <span>
               Точек: <b>{points.length}</b> · Площадь: <b>{formatHa(areaHa)}</b>
+              {points.length > 0 && points.length < 3 && <span className="muted"> · нужно ещё {3 - points.length}</span>}
             </span>
             <button className="btn btn-ghost" disabled={!points.length} onClick={() => setPoints(points.slice(0, -1))}>
               Отменить точку
@@ -279,32 +359,37 @@ export default function Apply() {
               аренды или акт на право пользования). Если контур залез на соседа случайно — поправьте точки.
             </div>
           )}
-          <label className="label" htmlFor="crop">
-            Культура в этом сезоне
-          </label>
-          <select id="crop" className="input" value={crop} onChange={(e) => setCrop(e.target.value)}>
-            {CROPS.map((c) => (
-              <option key={c}>{c}</option>
-            ))}
-          </select>
-          <label className="label" htmlFor="cadastral">
-            Кадастровый номер участка <span className="muted">(необязательно)</span>
-          </label>
-          <input
-            id="cadastral"
-            className="input mono"
-            placeholder="например 01:011:002:345"
-            maxLength={32}
-            value={cadastral}
-            onChange={(e) => setCadastral(e.target.value)}
-          />
-          <p className="muted small">Ускорит проверку: аналитик сверит контур с данными ГосКадастра.</p>
+          <div className="two-col form-cols">
+            <div>
+              <label className="label" htmlFor="crop">
+                Культура в этом сезоне
+              </label>
+              <select id="crop" className="input" value={crop} onChange={(e) => setCrop(e.target.value)}>
+                {CROPS.map((c) => (
+                  <option key={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="label" htmlFor="cadastral">
+                Кадастровый номер <span className="muted">(необязательно)</span>
+              </label>
+              <input
+                id="cadastral"
+                className="input mono"
+                placeholder="например 01:011:002:345"
+                maxLength={32}
+                value={cadastral}
+                onChange={(e) => setCadastral(e.target.value)}
+              />
+            </div>
+          </div>
+          <p className="muted small">Кадастровый номер ускорит проверку: аналитик сверит контур с ГосКадастром.</p>
           <div className="actions">
             <button className="btn btn-ghost" onClick={() => setStep(1)}>
               Назад
             </button>
-            <button className="btn btn-primary" disabled={points.length < 3 || areaHa < 1 || Boolean(fieldError)}
-              onClick={() => setStep(3)}>
+            <button className="btn btn-primary" disabled={!canOpen(3)} onClick={() => setStep(3)}>
               Дальше: товары
             </button>
           </div>
@@ -317,49 +402,115 @@ export default function Apply() {
             <div key={category} className="catalog-group">
               <h3>{CATEGORY_LABEL[category] ?? category}</h3>
               {list.map((p) => (
-                <div key={p.id} className="product">
+                <div key={p.id} className={(qty[p.id] ?? 0) > 0 ? "product picked" : "product"}>
                   <div>
                     <div>{p.name}</div>
                     <div className="muted">
                       {p.supplier} · {formatKzt(p.price)} за {p.unit}
                     </div>
                   </div>
-                  <input
-                    className="input qty"
-                    type="number"
-                    min={0}
-                    value={qty[p.id] ?? ""}
-                    placeholder="0"
-                    aria-label={`Количество: ${p.name}`}
-                    onChange={(e) => setQty({ ...qty, [p.id]: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
-                  />
+                  <div className="qty-cell">
+                    <input
+                      className="input qty"
+                      type="number"
+                      min={0}
+                      value={qty[p.id] ?? ""}
+                      placeholder="0"
+                      aria-label={`Количество: ${p.name}`}
+                      onChange={(e) =>
+                        setQty({ ...qty, [p.id]: Math.max(0, Math.floor(Number(e.target.value) || 0)) })
+                      }
+                    />
+                    <span className="muted small">{(qty[p.id] ?? 0) > 0 ? formatKzt(qty[p.id] * p.price) : p.unit}</span>
+                  </div>
                 </div>
               ))}
             </div>
           ))}
 
-          <div className="summary">
-            <div>
+          <div className="summary sticky-summary">
+            <div className="summary-total">
               Итого к рассрочке: <b>{formatKzt(total)}</b>
             </div>
-            {estimatedLimit > 0 && (
-              <div className="muted">
-                Максимальный лимит для {formatHa(areaHa)} при классе A —{" "}
-                {formatKzt(Math.min(estimatedLimit, config?.max_limit_a ?? estimatedLimit))}
-                {config && estimatedLimit > config.max_limit_a && " (потолок на одну заявку)"}
-              </div>
-            )}
-            <div className="muted small">
-              Товар поставщики отгружают перед севом, а вы платите двумя платежами после уборки — 15 октября и
-              15 ноября.
-            </div>
+            {rawLimit > 0 && <LimitMeter total={total} limitA={limitA} limitB={limitB} />}
           </div>
 
           <div className="actions">
             <button className="btn btn-ghost" onClick={() => setStep(2)}>
               Назад
             </button>
-            <button className="btn btn-primary" disabled={total <= 0 || submitting} onClick={submit}>
+            <button className="btn btn-primary" disabled={!canOpen(4)} onClick={() => setStep(4)}>
+              Дальше: проверить заявку
+            </button>
+          </div>
+        </section>
+      )}
+
+      {step === 4 && farm && (
+        <section className="card review">
+          <h2>Проверьте заявку перед отправкой</h2>
+          <div className="two-col">
+            <div>
+              <div className="review-block">
+                <div className="review-head">
+                  <h3>Хозяйство</h3>
+                  <button className="link-btn" onClick={() => setStep(1)}>
+                    Изменить
+                  </button>
+                </div>
+                <p>
+                  {farm.name} <span className="muted mono">· БИН {farm.bin}</span>
+                </p>
+              </div>
+              <div className="review-block">
+                <div className="review-head">
+                  <h3>Поле</h3>
+                  <button className="link-btn" onClick={() => setStep(2)}>
+                    Изменить
+                  </button>
+                </div>
+                <p>
+                  {crop} · {formatHa(areaHa)}
+                  {cadastral.trim() && <span className="muted mono"> · {cadastral.trim()}</span>}
+                </p>
+              </div>
+              <div className="review-block">
+                <div className="review-head">
+                  <h3>Товары</h3>
+                  <button className="link-btn" onClick={() => setStep(3)}>
+                    Изменить
+                  </button>
+                </div>
+                <table className="table">
+                  <tbody>
+                    {chosen.map((p) => (
+                      <tr key={p.id}>
+                        <td>{p.name}</td>
+                        <td className="num">
+                          {qty[p.id]} {p.unit}
+                        </td>
+                        <td className="num">{formatKzt(qty[p.id] * p.price)}</td>
+                      </tr>
+                    ))}
+                    <tr className="total">
+                      <td colSpan={2}>Итого</td>
+                      <td className="num">{formatKzt(total)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <FieldMap key={`review-${mapKey}`} points={points} height={300} />
+          </div>
+          <ul className="review-next">
+            <li>Решение придёт через 10–60 секунд: мы загрузим снимки поля за 7 сезонов и посчитаем индекс.</li>
+            <li>Товар поставщики отгружают перед севом, а платите вы после уборки — 15 октября и 15 ноября.</li>
+          </ul>
+          <div className="actions">
+            <button className="btn btn-ghost" onClick={() => setStep(3)}>
+              Назад
+            </button>
+            <button className="btn btn-primary" disabled={submitting} onClick={submit}>
               {submitting ? "Отправляем…" : "Отправить заявку"}
             </button>
           </div>

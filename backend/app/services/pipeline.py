@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..models import Application, ApplicationStatus, Decision, FieldSeason
 from .compliance import ComplianceInfo
+from .errors import describe_external_error
 from .finance import credit_line_available, open_deal, required_payout
 from .limits import approved_amount, build_schedule, format_kzt
 from .providers import get_satellite_provider
@@ -157,5 +158,5 @@ def process_application(db: Session, application_id: str, today: date | None = N
         app = db.get(Application, application_id)
         if app is not None:
             app.status = ApplicationStatus.ERROR
-            app.error_message = f"Не удалось получить спутниковые данные или рассчитать скоринг: {exc}"
+            app.error_message = describe_external_error(exc)
             db.commit()

@@ -77,6 +77,7 @@ class SeasonOut(BaseModel):
     scenes: int
     frost_days: int | None = None
     heat_days: int | None = None
+    source: str | None = None  # mock | cdse | gee — откуда NDVI
 
 
 class ItemOut(BaseModel):

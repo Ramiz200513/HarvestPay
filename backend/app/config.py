@@ -1,5 +1,6 @@
 """Настройки приложения. Все значения можно переопределить переменными окружения с префиксом HP_
-(например HP_DATABASE_URL) или файлом backend/.env. Пример — в .env.example в корне проекта."""
+(например HP_DATABASE_URL) или файлом .env: в корне проекта (его же читает Docker) или backend/.env —
+он важнее корневого. Пример — в .env.example в корне проекта."""
 
 from functools import lru_cache
 from typing import Literal
@@ -8,7 +9,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_prefix="HP_", extra="ignore", env_ignore_empty=True)
+    model_config = SettingsConfigDict(
+        env_file=("../.env", ".env"), env_prefix="HP_", extra="ignore", env_ignore_empty=True
+    )
 
     # По умолчанию SQLite-файл — чтобы проект запускался без установки PostgreSQL.
     # В docker-compose подставляется PostgreSQL.

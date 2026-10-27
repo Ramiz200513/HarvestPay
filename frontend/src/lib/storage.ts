@@ -1,8 +1,11 @@
+import type { Farm, LngLat } from "../types";
+
 // localStorage — только для удобства в этом браузере (список «моих заявок», токен аналитика).
 // Он может быть недоступен (приватный режим, запрет cookies), поэтому каждое обращение в try/catch:
 // сайт должен работать и без него.
 const KEY_APPS = "hp.myApplications";
 const KEY_TOKEN = "hp.analystToken";
+const KEY_DRAFT = "hp.applyDraft";
 
 function read(key: string): string | null {
   try {
@@ -42,3 +45,25 @@ export function rememberApplication(app: SavedApplication) {
 
 export const getAnalystToken = () => read(KEY_TOKEN) ?? "";
 export const setAnalystToken = (token: string | null) => write(KEY_TOKEN, token);
+
+// Черновик заявки: если фермер обновит страницу или вернётся позже, нарисованное поле не пропадёт
+export interface ApplyDraft {
+  step: number;
+  bin: string;
+  farm: Farm | null;
+  points: LngLat[];
+  crop: string;
+  cadastral: string;
+  qty: Record<number, number>;
+}
+
+export function loadDraft(): ApplyDraft | null {
+  try {
+    const draft = JSON.parse(read(KEY_DRAFT) ?? "null") as ApplyDraft | null;
+    return draft && Array.isArray(draft.points) ? draft : null;
+  } catch {
+    return null;
+  }
+}
+
+export const saveDraft = (draft: ApplyDraft | null) => write(KEY_DRAFT, draft ? JSON.stringify(draft) : null);

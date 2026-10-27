@@ -29,6 +29,7 @@ from .base import SeasonData
 
 TOKEN_URL = "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token"
 STATS_URL = "https://sh.dataspace.copernicus.eu/api/v1/statistics"
+PROCESS_URL = "https://sh.dataspace.copernicus.eu/api/v1/process"
 MIN_CLEAR_RATIO = 0.5
 RES_DEG = 0.0001  # ~10 м: разрешение каналов B04/B08, в градусах — геометрию передаём в WGS84
 
@@ -71,8 +72,9 @@ def stats_request(geometry: dict, start: date, end: date) -> dict:
     }
 
 
-def parse_scenes(payload: dict) -> list[dict]:
-    """Ответ Statistical API → безоблачные снимки [{"date": "YYYY-MM-DD", "ndvi": 0.42}, ...]."""
+def parse_scenes(payload: dict, with_clear: bool = False) -> list[dict]:
+    """Ответ Statistical API → безоблачные снимки [{"date": "YYYY-MM-DD", "ndvi": 0.42}, ...].
+    with_clear — добавить долю поля, видимую без облаков (0..1, от самого чистого снимка периода)."""
     raw = []
     for item in payload.get("data", []):
         if "error" in item:
@@ -88,8 +90,90 @@ def parse_scenes(payload: dict) -> list[dict]:
         raw.append((item["interval"]["from"][:10], mean, valid))
 
     best = max((v for _, _, v in raw), default=0)
-    by_day = {d: round(m, 3) for d, m, v in raw if v >= MIN_CLEAR_RATIO * best}
-    return [{"date": d, "ndvi": v} for d, v in sorted(by_day.items())]
+    by_day = {d: (round(m, 3), round(v / best, 2)) for d, m, v in raw if v >= MIN_CLEAR_RATIO * best}
+    if with_clear:
+        return [{"date": d, "ndvi": n, "clear": c} for d, (n, c) in sorted(by_day.items())]
+    return [{"date": d, "ndvi": n} for d, (n, _) in sorted(by_day.items())]
+
+
+# --- Снимки для просмотра на сайте -------------------------------------------------------------
+
+# Естественные цвета: красный, зелёный, синий каналы с усилением яркости (степь на снимке тёмная)
+EVALSCRIPT_COLOR = """//VERSION=3
+function setup() {
+  return { input: ["B02", "B03", "B04", "dataMask"], output: { bands: 4 } };
+}
+function evaluatePixel(s) {
+  return [2.8 * s.B04, 2.8 * s.B03, 2.8 * s.B02, s.dataMask];
+}
+"""
+
+# NDVI в цвете: голая почва — бежевая, слабая растительность — жёлтая, густая — тёмно-зелёная.
+# Облака и тени (по слою SCL) — серые, чтобы их не путали с «плохим полем»; вода — голубая.
+EVALSCRIPT_NDVI = """//VERSION=3
+function setup() {
+  return { input: ["B04", "B08", "SCL", "dataMask"], output: { bands: 4 } };
+}
+function evaluatePixel(s) {
+  if (s.SCL == 3 || s.SCL == 8 || s.SCL == 9 || s.SCL == 10) return [0.75, 0.75, 0.75, s.dataMask];
+  if (s.SCL == 6) return [0.55, 0.7, 0.85, s.dataMask];
+  const ndvi = (s.B08 - s.B04) / (s.B08 + s.B04);
+  const rgb = colorBlend(ndvi, [0.0, 0.2, 0.4, 0.6, 0.8],
+    [[0.78, 0.66, 0.5], [0.93, 0.85, 0.55], [0.65, 0.8, 0.36], [0.27, 0.6, 0.27], [0.05, 0.35, 0.15]]);
+  return [rgb[0], rgb[1], rgb[2], s.dataMask];
+}
+"""
+
+IMAGE_MODES = {"color": EVALSCRIPT_COLOR, "ndvi": EVALSCRIPT_NDVI}
+IMAGE_WIDTH = 640
+
+
+def image_bbox(geometry: dict, pad: float = 0.25) -> list[float]:
+    """Рамка снимка: контур поля плюс поля по краям, чтобы было видно соседей. [minLon, minLat, maxLon, maxLat]."""
+    ring = geometry["coordinates"][0]
+    lons, lats = [p[0] for p in ring], [p[1] for p in ring]
+    dlon, dlat = (max(lons) - min(lons)) or 0.001, (max(lats) - min(lats)) or 0.001
+    # Делаем рамку не уже, чем ~1 км, — маленькое поле иначе превращается в кашу из пикселей 10 м
+    dlon_min = 0.014 / max(math.cos(math.radians(statistics.fmean(lats))), 0.2)
+    dlon, dlat = max(dlon, dlon_min), max(dlat, 0.009)
+    clon, clat = (max(lons) + min(lons)) / 2, (max(lats) + min(lats)) / 2
+    half_lon, half_lat = dlon * (0.5 + pad), dlat * (0.5 + pad)
+    return [round(clon - half_lon, 6), round(clat - half_lat, 6), round(clon + half_lon, 6), round(clat + half_lat, 6)]
+
+
+def image_size(bbox: list[float], width: int = IMAGE_WIDTH) -> tuple[int, int]:
+    """Высота картинки по пропорциям рамки на местности (градус долготы короче градуса широты)."""
+    mid_lat = (bbox[1] + bbox[3]) / 2
+    ratio = (bbox[3] - bbox[1]) / ((bbox[2] - bbox[0]) * math.cos(math.radians(mid_lat)))
+    return width, max(120, min(1600, round(width * ratio)))
+
+
+def image_request(geometry: dict, day: date, mode: str) -> dict:
+    bbox = image_bbox(geometry)
+    width, height = image_size(bbox)
+    return {
+        "input": {
+            "bounds": {"bbox": bbox, "properties": {"crs": "http://www.opengis.net/def/crs/OGC/1.3/CRS84"}},
+            "data": [
+                {
+                    "type": "sentinel-2-l2a",
+                    "dataFilter": {
+                        "timeRange": {
+                            "from": f"{day.isoformat()}T00:00:00Z",
+                            "to": f"{(day + timedelta(days=1)).isoformat()}T00:00:00Z",
+                        },
+                        "mosaickingOrder": "leastCC",
+                    },
+                }
+            ],
+        },
+        "output": {
+            "width": width,
+            "height": height,
+            "responses": [{"identifier": "default", "format": {"type": "image/png"}}],
+        },
+        "evalscript": IMAGE_MODES[mode],
+    }
 
 
 def season_from_scenes(year: int, scenes: list[dict]) -> SeasonData:
@@ -157,3 +241,29 @@ class CdseSatelliteProvider:
     def fetch_timeline(self, geometry: dict, start: date, end: date) -> list[dict]:
         with self._client() as client:
             return self._scenes(client, geometry, start, end)
+
+    def fetch_scene_list(self, geometry: dict, start: date, end: date) -> list[dict]:
+        """Безоблачные снимки периода с долей видимого поля — для выбора даты на сайте."""
+        with self._client() as client:
+            resp = client.post(
+                STATS_URL,
+                json=stats_request(geometry, start, end),
+                headers=self._auth_header(client),
+                timeout=self.timeout,
+            )
+            resp.raise_for_status()
+            return parse_scenes(resp.json(), with_clear=True)
+
+    def fetch_image(self, geometry: dict, day: date, mode: str) -> bytes:
+        """PNG-снимок поля за день: mode="color" — как видит глаз, "ndvi" — растительность в цвете."""
+        if mode not in IMAGE_MODES:
+            raise ValueError(f"Неизвестный режим снимка: {mode}")
+        with self._client() as client:
+            resp = client.post(
+                PROCESS_URL,
+                json=image_request(geometry, day, mode),
+                headers={**self._auth_header(client), "Accept": "image/png"},
+                timeout=self.timeout,
+            )
+            resp.raise_for_status()
+            return resp.content

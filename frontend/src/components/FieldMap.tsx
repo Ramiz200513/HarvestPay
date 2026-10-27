@@ -16,6 +16,7 @@ import {
 } from "react-leaflet";
 import type { LatLngTuple } from "leaflet";
 import type { GeoPolygon, LngLat } from "../types";
+import type { MapFocus } from "./MapSearch";
 
 const DEFAULT_CENTER: LatLngTuple = [51.25, 71.2]; // пашни под Астаной
 const toLatLng = ([lng, lat]: LngLat): LatLngTuple => [lat, lng];
@@ -38,14 +39,24 @@ function FitTo({ points }: { points: LngLat[] }) {
   return null;
 }
 
+// Перелёт к найденному месту (поиск или «Я здесь»)
+function FlyTo({ focus }: { focus?: MapFocus }) {
+  const map = useMap();
+  useEffect(() => {
+    if (focus) map.flyTo([focus.lat, focus.lng], focus.zoom, { duration: 0.8 });
+  }, [map, focus]);
+  return null;
+}
+
 interface Props {
   points: LngLat[];
   onChange?: (points: LngLat[]) => void;
   height?: number;
   others?: GeoPolygon[]; // поля других хозяйств, с которыми есть пересечение (видит аналитик)
+  focus?: MapFocus;
 }
 
-export default function FieldMap({ points, onChange, height = 420, others = [] }: Props) {
+export default function FieldMap({ points, onChange, height = 420, others = [], focus }: Props) {
   const editable = Boolean(onChange);
   const latlngs = points.map(toLatLng);
 
@@ -64,6 +75,7 @@ export default function FieldMap({ points, onChange, height = 420, others = [] }
         />
         {editable && onChange && <ClickToAdd onAdd={(p) => onChange([...points, p])} />}
         <FitTo points={points} />
+        <FlyTo focus={focus} />
 
         {others.map((g, i) => (
           <Polygon

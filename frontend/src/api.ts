@@ -6,6 +6,7 @@ import type {
   DealAction,
   Farm,
   FieldCheck,
+  FieldImagery,
   GeoPolygon,
   Product,
   Portfolio,
@@ -74,6 +75,10 @@ export const api = {
     }),
 
   application: (id: string) => request<Application>(`/api/applications/${id}`),
+
+  // Снимки поля: безоблачные даты сезона и PNG за выбранный день (только с Copernicus Data Space)
+  imagery: (id: string, year: number) => request<FieldImagery>(`/api/applications/${id}/imagery?year=${year}`),
+  imageUrl: (id: string, day: string, mode: "color" | "ndvi") => `/api/applications/${id}/imagery/${day}.png?mode=${mode}`,
 
   analyst: {
     list: (token: string, status?: string) =>
