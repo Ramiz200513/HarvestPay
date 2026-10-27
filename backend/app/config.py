@@ -52,6 +52,18 @@ class Settings(BaseSettings):
     credit_line_limit: int = 500_000_000
     credit_line_rate: float = 0.17  # годовая ставка, под которую банк даёт линию
 
+    # --- Реквизиты для оплаты рассрочки фермером: спецсчёт платформы в банке-партнёре ---
+    # По умолчанию — демо-значения (на сайте помечены «демо»). В продакшене — настоящие из договора с банком.
+    payee_name: str = "ТОО «Harvest Pay»"
+    payee_bin: str = "240840012345"
+    payee_bank: str = "Банк-партнёр (демо)"
+    payee_iik: str = "KZ00000D000000000000"
+    payee_bik: str = "DEMOKZKA"
+    payee_kbe: str = "17"  # код бенефициара: юрлицо-резидент, негосударственное
+    payee_knp: str = "710"  # код назначения платежа: оплата за товары
+    payee_demo: bool = True  # показывать пометку «демо-реквизиты»
+    support_email: str = "support@harvestpay.example"
+
     analyst_token: str = "analyst-demo-token"  # обязательно смените в продакшене
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
 

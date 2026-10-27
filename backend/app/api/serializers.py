@@ -18,7 +18,7 @@ from ..schemas import (
     ProductOut,
     SeasonOut,
 )
-from ..services.finance import crop_failure_scenario, deal_economics, is_overdue
+from ..services.finance import crop_failure_scenario, deal_economics, is_overdue, payment_info
 from ..services.registry import FarmVerification
 
 
@@ -120,6 +120,7 @@ def deal_out(app: Application, full: bool) -> DealOut | None:
         schedule=deal.schedule or [],
         payout_date=deal.payout_date,
         events=deal.events or [],
+        payment=payment_info(deal),
     )
     if full:
         out.economics = deal_economics(deal).to_dict()

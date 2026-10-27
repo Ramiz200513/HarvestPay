@@ -6,6 +6,7 @@ import { useState } from "react";
 import { ApiError, api } from "../api";
 import { DEAL_STATUS_LABEL, MONITORING_LABEL, formatDate, formatKzt, formatPct } from "../lib/format";
 import type { Application, Deal, DealAction, DealStatus } from "../types";
+import HowToPay from "./HowToPay";
 import MonitoringChart from "./MonitoringChart";
 
 const TRACK: DealStatus[] = ["contracted", "supplier_paid", "delivered", "sowing_confirmed", "repaid"];
@@ -62,15 +63,18 @@ function Remaining({ deal }: { deal: Deal }) {
 
 export function DealSummary({ deal }: { deal: Deal }) {
   return (
-    <section className="card">
-      <h3 className="first">Ваша рассрочка</h3>
+    <section className="card deal-summary">
+      <div className="ds-head">
+        <h3 className="first">Ваша рассрочка</h3>
+        {deal.payment && <span className="muted small">договор № {deal.payment.contract_number}</span>}
+      </div>
       <DealTrack deal={deal} />
-      <Remaining deal={deal} />
       <p className="muted small">
-        Поставщики получают оплату от нас и отгружают товар перед севом — {formatDate(deal.payout_date)}. Мы видим
-        всходы на поле со спутника, поэтому выезжать на проверку не нужно. Если год окажется неурожайным, страховка и
-        перенос платежа на следующий сезон защищают хозяйство от просрочки.
+        Поставщики получают оплату от нас и отгружают товар перед севом ({formatDate(deal.payout_date)}). Всходы мы видим
+        со спутника, поэтому выезжать на проверку поля не нужно.
       </p>
+      <h3>Как оплатить</h3>
+      <HowToPay deal={deal} />
     </section>
   );
 }

@@ -156,6 +156,25 @@ class FlowStepOut(BaseModel):
     note: str
 
 
+class PaymentInfoOut(BaseModel):
+    """Как фермеру оплатить рассрочку: реквизиты спецсчёта платформы и условия договора."""
+
+    contract_number: str
+    recipient: str
+    bin: str
+    bank: str
+    iik: str
+    bik: str
+    kbe: str
+    knp: str
+    purpose: str  # назначение платежа — с номером договора, чтобы платёж зачли автоматически
+    demo: bool
+    fee_rate: float  # наценка за рассрочку, которую фермер видит в договоре
+    restructure_fee: float  # доплата за перенос остатка на следующий сезон при неурожае
+    insurance_deductible: float  # франшиза страховки урожая
+    support_email: str
+
+
 class DealOut(BaseModel):
     """Сделка по одобренной заявке. Фермер видит свою часть (что и когда платить);
     поля ниже «только аналитику» в ответе фермеру равны None."""
@@ -169,6 +188,7 @@ class DealOut(BaseModel):
     schedule: list[PaymentOut]
     payout_date: dt.date
     events: list[DealEventOut]
+    payment: PaymentInfoOut | None = None
     # --- только аналитику ---
     economics: dict | None = None
     discount_rate: float | None = None

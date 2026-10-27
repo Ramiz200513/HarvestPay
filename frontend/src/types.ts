@@ -178,6 +178,23 @@ export interface Monitoring {
   source: string;
 }
 
+export interface PaymentInfo {
+  contract_number: string;
+  recipient: string;
+  bin: string;
+  bank: string;
+  iik: string;
+  bik: string;
+  kbe: string;
+  knp: string;
+  purpose: string;
+  demo: boolean;
+  fee_rate: number;
+  restructure_fee: number;
+  insurance_deductible: number;
+  support_email: string;
+}
+
 export interface Deal {
   status: DealStatus;
   overdue: boolean;
@@ -188,6 +205,7 @@ export interface Deal {
   schedule: Payment[];
   payout_date: string;
   events: { at: string; action: string; amount: number | null; note: string }[];
+  payment: PaymentInfo | null;
   // только аналитику — у фермера null
   economics: Economics | null;
   discount_rate: number | null;

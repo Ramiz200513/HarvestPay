@@ -281,3 +281,24 @@ def test_imagery_validates_input(client):
     assert client.get(f"/api/applications/{app_id}/imagery/2010-07-01.png").status_code == 422
     assert client.get(f"/api/applications/{app_id}/imagery/2024-07-01.png", params={"mode": "x"}).status_code == 422
     assert client.get("/api/applications/nope/imagery", params={"year": 2024}).status_code == 404
+
+
+def test_farmer_sees_how_to_pay(client):
+    # Ищем одобренную заявку: у неё открыта сделка с реквизитами для оплаты
+    for i in range(40):
+        lon = 66.0 + i * 0.05
+        geom = {
+            "type": "Polygon",
+            "coordinates": [[[lon, 53.0], [lon + 0.01, 53.0], [lon + 0.01, 53.007], [lon, 53.007]]],
+        }
+        data = client.get(f"/api/applications/{submit(client, geometry=geom).json()['id']}").json()
+        if data["status"] == "approved":
+            break
+    else:
+        pytest.skip("Не нашлось одобренного поля в демо-данных")
+    pay = data["deal"]["payment"]
+    assert pay["contract_number"].startswith("HP-")
+    assert pay["contract_number"] in pay["purpose"]
+    assert pay["iik"].startswith("KZ") and len(pay["bin"]) == 12
+    assert pay["fee_rate"] > 0 and pay["restructure_fee"] == 0.08
+    assert data["deal"]["economics"] is None  # экономика сделки фермеру не видна

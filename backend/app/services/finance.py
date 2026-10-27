@@ -204,6 +204,33 @@ def open_deal(db: Session, app: Application, today: date | None = None) -> Deal:
     return deal
 
 
+def contract_number(deal: Deal) -> str:
+    """Номер договора рассрочки: HP-<год>-<номер сделки>. Фермер указывает его в назначении платежа."""
+    year = deal.created_at.year if deal.created_at else date.today().year
+    return f"HP-{year}-{deal.id:06d}"
+
+
+def payment_info(deal: Deal) -> dict:
+    s = get_settings()
+    number = contract_number(deal)
+    return {
+        "contract_number": number,
+        "recipient": s.payee_name,
+        "bin": s.payee_bin,
+        "bank": s.payee_bank,
+        "iik": s.payee_iik,
+        "bik": s.payee_bik,
+        "kbe": s.payee_kbe,
+        "knp": s.payee_knp,
+        "purpose": f"Оплата по договору рассрочки № {number} за семена и удобрения, без НДС",
+        "demo": s.payee_demo,
+        "fee_rate": deal.fee_rate,
+        "restructure_fee": RESTRUCTURE_FEE,
+        "insurance_deductible": INSURANCE_DEDUCTIBLE,
+        "support_email": s.support_email,
+    }
+
+
 def is_overdue(deal: Deal, today: date | None = None) -> bool:
     if deal.status not in DealStatus.ACTIVE:
         return False
