@@ -2,6 +2,8 @@
 // Используется и на странице фермера, и в кабинете аналитика — поэтому вынесено в компонент.
 import type { Application } from "../types";
 import { CLASS_LABEL, STATUS_LABEL, formatDate, formatHa, formatKzt } from "../lib/format";
+import ChecksList from "./ChecksList";
+import { DealSummary } from "./DealPanel";
 import FieldMap from "./FieldMap";
 import NdviChart from "./NdviChart";
 
@@ -58,6 +60,18 @@ function ScoreBreakdown({ app }: { app: Application }) {
           <div className="breakdown-value">−{c.moisture_penalty}</div>
         </div>
       )}
+      {c.frost_days_avg != null && (
+        <div className="breakdown-row">
+          <div className="breakdown-label">
+            Климат района{" "}
+            <span className="muted">
+              · заморозки {c.frost_days_avg} дн./сезон · жара ≥35 °C {c.heat_days_avg} дн./сезон
+            </span>
+          </div>
+          <div className="meter" style={{ background: "transparent" }} />
+          <div className="breakdown-value">{c.climate_penalty ? `−${c.climate_penalty}` : "0"}</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -101,6 +115,7 @@ export default function ApplicationDetails({ app }: { app: Application }) {
   return (
     <div className="details">
       <OverlapsBlock app={app} />
+      {app.deal && !app.deal.economics && <DealSummary deal={app.deal} />}
       {d && (
         <section className="card decision">
           <div className="decision-head">
@@ -111,6 +126,9 @@ export default function ApplicationDetails({ app }: { app: Application }) {
                 {d.score !== null && <span className="muted"> · индекс стабильности {d.score} / 100</span>}
               </div>
               <div className="muted">
+                {d.components.field_class && d.components.field_class !== d.score_class && (
+                  <>Поле оценено классом {d.components.field_class}, итоговый класс снижен правилами · </>
+                )}
                 {d.decided_by === "analyst"
                   ? "Решение принял кредитный аналитик"
                   : app.status === "review"
@@ -135,7 +153,7 @@ export default function ApplicationDetails({ app }: { app: Application }) {
             </div>
           </div>
 
-          {d.schedule.length > 0 && (
+          {d.schedule.length > 0 && !app.deal && (
             <>
               <h3>График платежей</h3>
               <table className="table">
@@ -174,9 +192,15 @@ export default function ApplicationDetails({ app }: { app: Application }) {
           <p>
             {app.field.crop} · {formatHa(app.field.area_ha)}
           </p>
+          {app.field.cadastral_number && (
+            <p>
+              Кадастровый номер: <span className="mono">{app.field.cadastral_number}</span>
+            </p>
+          )}
           <p className="muted">
             {app.farm.name} · БИН {app.farm.bin}
           </p>
+          <ChecksList checks={app.farm.checks} />
           <h3>Товары в рассрочку</h3>
           <table className="table">
             <tbody>

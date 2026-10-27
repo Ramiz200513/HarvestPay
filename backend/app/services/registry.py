@@ -17,6 +17,8 @@ from datetime import date
 from typing import Protocol
 
 from .bin_check import check_bin
+from .compliance import Compliance, ComplianceInfo
+from .limits import format_kzt
 
 
 class RegistryUnavailable(Exception):
@@ -45,6 +47,8 @@ class Registry(Protocol):
 #   260440000016 — ТОО, апрель 2026 → отказ «слишком молодое»
 #   080740000019 — ликвидировано → отказ
 #   150340000015 — нет в реестре → отказ
+#   250643000018 — КХ, июнь 2025 → проходит, но класс не выше B (младше 2 лет)
+# Демо-БИН для налогов, арестов и судов — в compliance.py.
 # Любой другой валидный БИН в демо-режиме тоже «находится» — с названием, выбранным по хешу.
 DEMO_LIQUIDATED = {"080740000019"}
 DEMO_NOT_FOUND = {"150340000015"}
@@ -138,14 +142,39 @@ class FarmVerification:
     legal_form: str | None = None
     source: str | None = None
     reasons: list[str] = field(default_factory=list)
+    compliance: ComplianceInfo | None = None
+    # Чек-лист для экрана: [{"label", "status": ok|warn|fail|info, "detail"}]
+    checks: list[dict] = field(default_factory=list)
 
 
 def months_between(start: date, end: date) -> int:
     return (end.year - start.year) * 12 + (end.month - start.month)
 
 
-def verify_farm(bin_value: str, registry: Registry, min_age_months: int, today: date | None = None) -> FarmVerification:
-    """Первый шаг скоринга (ромб «Проверка юрлица» на блок-схеме)."""
+def format_age(months: int) -> str:
+    years, rest = divmod(max(months, 0), 12)
+    parts = []
+    if years:
+        parts.append(f"{years} г." if years < 5 else f"{years} лет")
+    if rest or not years:
+        parts.append(f"{rest} мес.")
+    return " ".join(parts)
+
+
+def _check(label: str, status: str, detail: str) -> dict:
+    return {"label": label, "status": status, "detail": detail}
+
+
+def verify_farm(
+    bin_value: str,
+    registry: Registry,
+    min_age_months: int,
+    today: date | None = None,
+    compliance: Compliance | None = None,
+    max_tax_debt: int = 100_000,
+    class_a_min_age_months: int = 24,
+) -> FarmVerification:
+    """Первый шаг скоринга (ромб «Проверка юрлица» на блок-схеме): реестр + налоги, аресты, суды."""
     today = today or date.today()
     parsed = check_bin(bin_value)
     if not parsed.valid:
@@ -161,16 +190,66 @@ def verify_farm(bin_value: str, registry: Registry, min_age_months: int, today: 
         source=info.source,
     )
 
+    def reject(reason: str) -> None:
+        result.status = "rejected"
+        result.reasons.append(reason)
+
     if not info.found:
-        result.status = "rejected"
-        result.reasons.append("Организация с таким БИН не найдена в реестре")
+        reject("Организация с таким БИН не найдена в реестре")
+        result.checks.append(_check("Реестр юрлиц", "fail", "Не найдена"))
         return result
-    if not info.active:
-        result.status = "rejected"
-        result.reasons.append("Организация ликвидирована или деятельность приостановлена")
-    if info.registered_at and months_between(info.registered_at, today) < min_age_months:
-        result.status = "rejected"
-        result.reasons.append(
-            f"Хозяйство зарегистрировано меньше {min_age_months} мес. назад — пока нет истории для оценки"
+    if info.active:
+        result.checks.append(_check("Реестр юрлиц", "ok", "Действующая организация"))
+    else:
+        reject("Организация ликвидирована или деятельность приостановлена")
+        result.checks.append(_check("Реестр юрлиц", "fail", "Ликвидирована или приостановлена"))
+
+    if info.registered_at:
+        age = months_between(info.registered_at, today)
+        if age < min_age_months:
+            reject(f"Хозяйство зарегистрировано меньше {min_age_months} мес. назад — пока нет истории для оценки")
+            result.checks.append(_check("Возраст хозяйства", "fail", format_age(age)))
+        elif age < class_a_min_age_months:
+            result.checks.append(
+                _check("Возраст хозяйства", "warn", f"{format_age(age)} — меньше 2 лет, класс не выше B")
+            )
+        else:
+            result.checks.append(_check("Возраст хозяйства", "ok", format_age(age)))
+
+    if compliance is None:
+        return result
+
+    c = compliance.lookup(parsed.bin)
+    result.compliance = c
+
+    if c.arrests:
+        reject(f"{c.arrests[0]} — до снятия ареста рассрочка невозможна")
+        result.checks.append(_check("Аресты и запреты", "fail", "; ".join(c.arrests)))
+    else:
+        result.checks.append(_check("Аресты и запреты", "ok", "Нет"))
+
+    if c.tax_debt > max_tax_debt:
+        reject(f"Налоговая задолженность {format_kzt(c.tax_debt)} — погасите её и подайте заявку снова")
+        result.checks.append(_check("Налоги", "fail", f"Задолженность {format_kzt(c.tax_debt)}"))
+    elif c.tax_debt > 0:
+        result.checks.append(
+            _check(
+                "Налоги", "warn", f"Небольшая задолженность {format_kzt(c.tax_debt)} — погасите до подписания договора"
+            )
         )
+    else:
+        result.checks.append(_check("Налоги", "ok", "Задолженности нет"))
+
+    if c.court_cases:
+        result.checks.append(
+            _check("Суды", "warn", f"Активных дел, где хозяйство ответчик: {c.court_cases} — класс не выше B")
+        )
+    else:
+        result.checks.append(_check("Суды", "ok", "Активных дел нет"))
+
+    if c.subsidy_years:
+        years = ", ".join(str(y) for y in c.subsidy_years)
+        result.checks.append(_check("Господдержка", "ok", f"Получало субсидии: {years}"))
+    else:
+        result.checks.append(_check("Господдержка", "info", "Субсидий не получало — это не минус"))
     return result

@@ -1,8 +1,11 @@
-// Кабинет кредитного аналитика: вход по токену, очередь заявок, ручное решение по классу C.
+// Кабинет кредитного аналитика: вход по токену, очередь заявок, ручное решение по классу C,
+// портфель сделок и кредитная линия, шаги сделки и спутниковый мониторинг.
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api } from "../api";
 import ApplicationDetails, { ClassBadge, StatusPill } from "../components/ApplicationDetails";
-import { formatDate, formatHa, formatKzt } from "../lib/format";
+import { DealPanel } from "../components/DealPanel";
+import PortfolioView from "../components/PortfolioView";
+import { DEAL_STATUS_LABEL, formatDate, formatHa, formatKzt } from "../lib/format";
 import { getAnalystToken, setAnalystToken } from "../lib/storage";
 import type { Application, ApplicationListItem } from "../types";
 
@@ -17,6 +20,7 @@ const FILTERS = [
 export default function Analyst() {
   const [token, setToken] = useState(getAnalystToken());
   const [tokenInput, setTokenInput] = useState("");
+  const [tab, setTab] = useState<"queue" | "portfolio">("queue");
   const [filter, setFilter] = useState("review");
   const [list, setList] = useState<ApplicationListItem[]>([]);
   const [selected, setSelected] = useState<Application | null>(null);
@@ -132,6 +136,30 @@ export default function Analyst() {
       </div>
       {error && <div className="alert">{error}</div>}
 
+      <div className="tabs" role="tablist">
+        <button role="tab" aria-selected={tab === "queue"} className={tab === "queue" ? "tab active" : "tab"}
+          onClick={() => setTab("queue")}>
+          Заявки
+        </button>
+        <button role="tab" aria-selected={tab === "portfolio"} className={tab === "portfolio" ? "tab active" : "tab"}
+          onClick={() => setTab("portfolio")}>
+          Портфель и деньги
+        </button>
+      </div>
+
+      {tab === "portfolio" && (
+        <PortfolioView
+          token={token}
+          onOpen={(id) => {
+            setTab("queue");
+            setFilter("approved");
+            open(id);
+          }}
+        />
+      )}
+
+      {tab === "queue" && (
+      <>
       <div className="filters">
         {FILTERS.map((f) => (
           <button
@@ -170,6 +198,7 @@ export default function Analyst() {
                 <StatusPill status={a.status} />
                 <span className="muted">{formatDate(a.created_at)}</span>
               </div>
+              {a.deal_status && <div className="muted small">Сделка: {DEAL_STATUS_LABEL[a.deal_status]}</div>}
             </button>
           ))}
         </div>
@@ -220,11 +249,23 @@ export default function Analyst() {
                   </button>
                 </section>
               )}
+              {selected.deal && (
+                <DealPanel
+                  app={selected}
+                  token={token}
+                  onChange={(updated) => {
+                    setSelected(updated);
+                    reload();
+                  }}
+                />
+              )}
               <ApplicationDetails app={selected} />
             </>
           )}
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 }

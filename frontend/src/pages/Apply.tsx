@@ -3,9 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ApiError, api } from "../api";
+import ChecksList from "../components/ChecksList";
 import FieldMap from "../components/FieldMap";
 import { CATEGORY_LABEL, formatHa, formatKzt } from "../lib/format";
 import { closeRing, ringAreaHa } from "../lib/geo";
+import { readFieldFile } from "../lib/kml";
 import { rememberApplication } from "../lib/storage";
 import type { Farm, FieldCheck, LngLat, Product, PublicConfig } from "../types";
 
@@ -14,6 +16,10 @@ const CROPS = ["Пшеница яровая", "Ячмень", "Подсолне�
 const DEMO_BINS = [
   { bin: "150343000016", note: "КХ, проходит проверку" },
   { bin: "180240000011", note: "ТОО, проходит проверку" },
+  { bin: "250643000018", note: "молодое КХ — не выше класса B" },
+  { bin: "190340000017", note: "есть суд — не выше класса B" },
+  { bin: "170343000014", note: "налоговый долг — отказ" },
+  { bin: "160540000019", note: "арест счетов — отказ" },
   { bin: "080740000019", note: "ликвидировано — отказ" },
   { bin: "260440000016", note: "зарегистрировано недавно — отказ" },
 ];
@@ -31,6 +37,9 @@ export default function Apply() {
   // шаг 2
   const [points, setPoints] = useState<LngLat[]>([]);
   const [crop, setCrop] = useState(CROPS[0]);
+  const [cadastral, setCadastral] = useState("");
+  const [importNote, setImportNote] = useState<string | null>(null);
+  const [mapKey, setMapKey] = useState(0); // смена key пересоздаёт карту — она приблизится к загруженному полю
   const [fieldCheck, setFieldCheck] = useState<FieldCheck | null>(null);
   const [fieldError, setFieldError] = useState<string | null>(null);
 
@@ -65,6 +74,23 @@ export default function Apply() {
   const total = products.reduce((sum, p) => sum + (qty[p.id] ?? 0) * p.price, 0);
   const estimatedLimit = config ? Math.round((areaHa * config.limit_per_ha) / 1000) * 1000 : 0;
 
+  async function importFile(file: File | undefined) {
+    if (!file) return;
+    setImportNote(null);
+    try {
+      const imported = await readFieldFile(file);
+      setPoints(imported.points);
+      setMapKey((k) => k + 1);
+      setImportNote(
+        imported.polygons > 1
+          ? `В файле ${imported.polygons} полигонов — загружен первый. Для других полей подайте отдельные заявки.`
+          : `Контур загружен из файла ${file.name}: ${imported.points.length} точек.`,
+      );
+    } catch (e) {
+      setImportNote(`Не удалось прочитать файл: ${e instanceof Error ? e.message : "неизвестная ошибка"}`);
+    }
+  }
+
   function showError(e: unknown) {
     if (e instanceof ApiError) setError({ message: e.message, reasons: e.reasons });
     else setError({ message: "Сервер недоступен. Запущен ли бэкенд?", reasons: [] });
@@ -93,7 +119,11 @@ export default function Apply() {
         .map(([id, q]) => ({ product_id: Number(id), quantity: q }));
       const res = await api.createApplication({
         bin: farm.bin,
-        field: { geometry: { type: "Polygon", coordinates: closeRing(points) }, crop },
+        field: {
+          geometry: { type: "Polygon", coordinates: closeRing(points) },
+          crop,
+          cadastral_number: cadastral.trim() || undefined,
+        },
         items,
       });
       rememberApplication({ id: res.id, farm: farm.name ?? farm.bin, createdAt: new Date().toISOString() });
@@ -195,6 +225,7 @@ export default function Apply() {
                   ))}
                 </ul>
               )}
+              <ChecksList checks={farm.checks} />
             </div>
           )}
 
@@ -208,10 +239,25 @@ export default function Apply() {
 
       {step === 2 && (
         <section className="card">
-          <p>
-            Кликайте по углам поля на снимке — контур замкнётся автоматически. Колесо мыши — приблизить.
-          </p>
-          <FieldMap points={points} onChange={setPoints} />
+          <div className="field-intro">
+            <p>
+              Кликайте по углам поля на снимке — контур замкнётся автоматически. Колесо мыши — приблизить. Или
+              загрузите готовые границы из Google Earth или агросервиса.
+            </p>
+            <label className="btn btn-ghost file-btn">
+              Загрузить KML / GeoJSON
+              <input
+                type="file"
+                accept=".kml,.geojson,.json"
+                onChange={(e) => {
+                  importFile(e.target.files?.[0]);
+                  e.target.value = ""; // тот же файл можно выбрать повторно
+                }}
+              />
+            </label>
+          </div>
+          {importNote && <p className="notice">{importNote}</p>}
+          <FieldMap key={mapKey} points={points} onChange={setPoints} />
           <div className="map-toolbar">
             <span>
               Точек: <b>{points.length}</b> · Площадь: <b>{formatHa(areaHa)}</b>
@@ -240,6 +286,18 @@ export default function Apply() {
               <option key={c}>{c}</option>
             ))}
           </select>
+          <label className="label" htmlFor="cadastral">
+            Кадастровый номер участка <span className="muted">(необязательно)</span>
+          </label>
+          <input
+            id="cadastral"
+            className="input mono"
+            placeholder="например 01:011:002:345"
+            maxLength={32}
+            value={cadastral}
+            onChange={(e) => setCadastral(e.target.value)}
+          />
+          <p className="muted small">Ускорит проверку: аналитик сверит контур с данными ГосКадастра.</p>
           <div className="actions">
             <button className="btn btn-ghost" onClick={() => setStep(1)}>
               Назад
@@ -285,9 +343,15 @@ export default function Apply() {
             </div>
             {estimatedLimit > 0 && (
               <div className="muted">
-                Максимальный лимит для {formatHa(areaHa)} при классе A — {formatKzt(estimatedLimit)}
+                Максимальный лимит для {formatHa(areaHa)} при классе A —{" "}
+                {formatKzt(Math.min(estimatedLimit, config?.max_limit_a ?? estimatedLimit))}
+                {config && estimatedLimit > config.max_limit_a && " (потолок на одну заявку)"}
               </div>
             )}
+            <div className="muted small">
+              Товар поставщики отгружают перед севом, а вы платите двумя платежами после уборки — 15 октября и
+              15 ноября.
+            </div>
           </div>
 
           <div className="actions">

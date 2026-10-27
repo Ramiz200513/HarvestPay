@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import Application, ApplicationItem, Farm, Field, Product
+from ..models import Application, ApplicationItem, Farm, Field, Product, Supplier
 from ..schemas import (
     ApplicationCreate,
     ApplicationCreated,
@@ -16,14 +16,16 @@ from ..services.geo import GeometryError, parse_field_geometry
 from ..services.overlap import find_overlaps
 from ..tasks import enqueue_application
 from .farms import verify_and_store
-from .serializers import application_out, overlap_out
+from .serializers import application_out, overlap_out, product_out
 
 router = APIRouter(prefix="/api", tags=["Заявки"])
 
 
 @router.get("/products", response_model=list[ProductOut], summary="Каталог товаров для рассрочки")
-def list_products(db: Session = Depends(get_db)) -> list[Product]:
-    return list(db.scalars(select(Product).order_by(Product.category, Product.name)))
+def list_products(db: Session = Depends(get_db)) -> list[ProductOut]:
+    # Скидку поставщика фермеру не показываем — это условия между поставщиком и платформой
+    query = select(Product).join(Supplier).order_by(Product.category, Product.name)
+    return [product_out(p) for p in db.scalars(query)]
 
 
 @router.post("/applications", response_model=ApplicationCreated, status_code=201, summary="Подать заявку")
@@ -64,6 +66,7 @@ def create_application(
         max_lon=max_lon,
         max_lat=max_lat,
         crop=body.field.crop.strip(),
+        cadastral_number=(body.field.cadastral_number or "").strip() or None,
         area_ha=geom.area_ha,
         centroid_lat=geom.centroid_lat,
         centroid_lon=geom.centroid_lon,

@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api import analyst, applications, farms
+from .api import analyst, applications, deals, farms
 from .config import get_settings
 from .db import SessionLocal, engine
 from .migrate import run_migrations
@@ -30,7 +30,7 @@ async def lifespan(_: FastAPI):
 
 
 settings = get_settings()
-app = FastAPI(title="Harvest Pay API", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="Harvest Pay API", version="0.3.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -42,6 +42,7 @@ app.add_middleware(
 app.include_router(farms.router)
 app.include_router(applications.router)
 app.include_router(analyst.router)
+app.include_router(deals.router)
 
 
 @app.get("/api/health", tags=["Служебное"])
@@ -57,4 +58,5 @@ def public_config() -> dict:
         "registry_provider": settings.registry_provider,
         "seasons": settings.seasons,
         "limit_per_ha": settings.limit_per_ha,
+        "max_limit_a": settings.max_limit_a,
     }

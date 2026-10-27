@@ -4,6 +4,7 @@
 from functools import lru_cache
 
 from ..config import get_settings
+from .compliance import Compliance, MockCompliance
 from .registry import MockRegistry, Registry, StatGovRegistry
 from .satellite.base import SatelliteProvider
 from .satellite.mock import MockSatelliteProvider
@@ -15,6 +16,12 @@ def get_registry() -> Registry:
     if s.registry_provider == "statgov":
         return StatGovRegistry(s.statgov_url)
     return MockRegistry()
+
+
+@lru_cache
+def get_compliance() -> Compliance:
+    # Налоги, аресты, суды: в продакшене — API агрегатора госбаз (adata.kz / Kompra) по договору
+    return MockCompliance()
 
 
 @lru_cache

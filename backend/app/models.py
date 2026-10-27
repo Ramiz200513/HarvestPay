@@ -1,5 +1,7 @@
 """Модели БД — 7 сущностей из ER-диаграммы:
 Хозяйство → Поле → РасчётПоля, Хозяйство → Заявка → Решение, Заявка → ПозицияЗаявки ← Товар.
+С версии 0.3 добавлены Поставщик (Товар → Поставщик) и Сделка (Заявка → Сделка): маркетплейс
+платит поставщику со скидкой из кредитной линии банка, а фермер рассчитывается осенью.
 
 Отличие от первой версии ER-диаграммы: у Заявки есть field_id — заявка подаётся под конкретное поле,
 иначе непонятно, какое поле оценивать.
@@ -50,6 +52,9 @@ class Farm(Base):
     verification_status: Mapped[str] = mapped_column(String(20))  # verified | rejected
     verification_reasons: Mapped[list] = mapped_column(JsonType, default=list)
     registry_source: Mapped[str | None] = mapped_column(String(50))
+    # Налоги, аресты, суды, субсидии (services/compliance.py) и чек-лист проверки для экрана
+    compliance: Mapped[dict] = mapped_column(JsonType, default=dict)
+    checks: Mapped[list] = mapped_column(JsonType, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     fields: Mapped[list[Field]] = relationship(back_populates="farm")
@@ -63,6 +68,8 @@ class Field(Base):
     farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id"), index=True)
     geometry: Mapped[dict] = mapped_column(JsonType)  # GeoJSON Polygon
     crop: Mapped[str] = mapped_column(String(50))
+    # Кадастровый номер со слов фермера — сверку с ГосКадастром пока делает аналитик вручную
+    cadastral_number: Mapped[str | None] = mapped_column(String(32))
     area_ha: Mapped[float] = mapped_column(Float)
     centroid_lat: Mapped[float] = mapped_column(Float)
     centroid_lon: Mapped[float] = mapped_column(Float)
@@ -93,9 +100,25 @@ class FieldSeason(Base):
     ndvi_mean: Mapped[float | None] = mapped_column(Float)
     soil_moisture: Mapped[float | None] = mapped_column(Float)
     scenes: Mapped[int] = mapped_column(Integer, default=0)
+    # Климат сезона (ERA5-Land): дни заморозков после сева и дни жары ≥ 35 °C в июне–июле
+    frost_days: Mapped[int | None] = mapped_column(Integer)
+    heat_days: Mapped[int | None] = mapped_column(Integer)
     source: Mapped[str] = mapped_column(String(20))  # mock | gee
 
     field: Mapped[Field] = relationship(back_populates="seasons")
+
+
+class Supplier(Base):
+    """Дистрибьютор семян/удобрений. Получает оплату сразу при отгрузке, а за это даёт скидку
+    маркетплейсу (discount) — из неё и складывается часть дохода платформы."""
+
+    __tablename__ = "suppliers"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), unique=True)
+    discount: Mapped[float] = mapped_column(Float)  # 0.06 = скидка 6 % от розничной цены
+
+    products: Mapped[list[Product]] = relationship(back_populates="supplier")
 
 
 class Product(Base):
@@ -104,9 +127,11 @@ class Product(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255))
     category: Mapped[str] = mapped_column(String(50))  # seeds | fertilizer | protection
-    supplier: Mapped[str] = mapped_column(String(255))
+    supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id"), index=True)
     unit: Mapped[str] = mapped_column(String(20))
-    price: Mapped[int] = mapped_column(Integer)  # ₸ за единицу
+    price: Mapped[int] = mapped_column(Integer)  # ₸ за единицу — розничная цена для фермера
+
+    supplier: Mapped[Supplier] = relationship(back_populates="products")
 
 
 class Application(Base):
@@ -128,6 +153,7 @@ class Application(Base):
     field: Mapped[Field] = relationship()
     items: Mapped[list[ApplicationItem]] = relationship(back_populates="application", cascade="all, delete-orphan")
     decision: Mapped[Decision | None] = relationship(back_populates="application", uselist=False)
+    deal: Mapped[Deal | None] = relationship(back_populates="application", uselist=False)
 
 
 class ApplicationItem(Base):
@@ -164,3 +190,43 @@ class Decision(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     application: Mapped[Application] = relationship(back_populates="decision")
+
+
+class DealStatus:
+    """Жизненный цикл сделки после одобрения (services/finance.py)."""
+
+    CONTRACTED = "contracted"  # трёхсторонний договор подписан, деньги зарезервированы в кредитной линии
+    SUPPLIER_PAID = "supplier_paid"  # банк перечислил поставщику цену со скидкой
+    DELIVERED = "delivered"  # товар отгружен фермеру
+    SOWING_CONFIRMED = "sowing_confirmed"  # спутник видит всходы на поле
+    RESTRUCTURED = "restructured"  # неурожай: остаток долга перенесён на следующий сезон
+    REPAID = "repaid"  # фермер рассчитался полностью
+
+    ACTIVE = (CONTRACTED, SUPPLIER_PAID, DELIVERED, SOWING_CONFIRMED, RESTRUCTURED)
+
+
+class Deal(Base):
+    """«Сделка»: деньги по одобренной заявке. Суммы фиксируются в момент одобрения,
+    чтобы смена скидки поставщика или ставки банка не меняла уже заключённые договоры."""
+
+    __tablename__ = "deals"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    application_id: Mapped[str] = mapped_column(ForeignKey("applications.id"), unique=True)
+    status: Mapped[str] = mapped_column(String(20), default=DealStatus.CONTRACTED, index=True)
+    score_class: Mapped[str] = mapped_column(String(1))
+    goods_amount: Mapped[int] = mapped_column(Integer)  # товар по розничной цене = тело рассрочки
+    discount_rate: Mapped[float] = mapped_column(Float)  # средневзвешенная скидка поставщиков
+    supplier_payout: Mapped[int] = mapped_column(Integer)  # сколько банк платит поставщикам
+    fee_rate: Mapped[float] = mapped_column(Float)  # наценка за рассрочку для фермера
+    farmer_total: Mapped[int] = mapped_column(Integer)  # сколько фермер вернёт осенью
+    funding_rate: Mapped[float] = mapped_column(Float)  # годовая ставка кредитной линии
+    payout_date: Mapped[date] = mapped_column(Date)  # плановая оплата поставщику (перед севом)
+    schedule: Mapped[list] = mapped_column(JsonType, default=list)  # текущий график (меняется при реструктуризации)
+    paid_amount: Mapped[int] = mapped_column(Integer, default=0)
+    events: Mapped[list] = mapped_column(JsonType, default=list)  # журнал: [{at, action, amount, note}]
+    monitoring: Mapped[dict | None] = mapped_column(JsonType)  # последний спутниковый мониторинг сезона
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    application: Mapped[Application] = relationship(back_populates="deal")

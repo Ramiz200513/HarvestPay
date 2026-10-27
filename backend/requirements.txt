@@ -1,13 +1,13 @@
 fastapi==0.115.12
 uvicorn[standard]==0.34.0
-sqlalchemy==2.0.36
-psycopg[binary]==3.2.3
-pydantic==2.10.4
-pydantic-settings==2.7.0
-celery[redis]==5.4.0
+sqlalchemy==2.0.44
+psycopg[binary]==3.2.12
+pydantic==2.12.3
+pydantic-settings==2.11.0
+celery[redis]==5.5.3
 httpx==0.28.1
-alembic==1.14.0        # миграции схемы БД
-geoalchemy2==0.16.0    # тип Geometry для PostGIS
-shapely==2.0.6         # пересечения полигонов, когда БД — SQLite
+alembic==1.17.0        # миграции схемы БД
+geoalchemy2==0.18.0    # тип Geometry для PostGIS
+shapely==2.1.2         # пересечения полигонов, когда БД — SQLite
 # Нужен только при HP_SATELLITE_PROVIDER=gee
 earthengine-api>=1.0,<2

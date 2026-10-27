@@ -28,8 +28,20 @@ class Settings(BaseSettings):
     registry_provider: Literal["mock", "statgov"] = "mock"
     statgov_url: str = "https://old.stat.gov.kz/api/juridical/counter/api/"
     min_company_age_months: int = 12
+    # Налоговый долг до этой суммы — предупреждение (часто это пеня за просрочку на пару дней), больше — отказ
+    max_tax_debt: int = 100_000
 
     limit_per_ha: int = 60_000  # ₸ на гектар — базовая норма лимита
+
+    # --- Андеррайтинг: правила поверх спутникового балла (services/underwriting.py) ---
+    class_a_min_age_months: int = 24  # класс A — только хозяйствам старше 2 лет
+    max_limit_a: int = 20_000_000  # потолок лимита на одну заявку для класса A
+    max_limit_b: int = 10_000_000  # и для класса B
+
+    # --- Фондирование: кредитная линия банка-партнёра (services/finance.py) ---
+    credit_line_bank: str = "Банк-партнёр (демо)"
+    credit_line_limit: int = 500_000_000
+    credit_line_rate: float = 0.17  # годовая ставка, под которую банк даёт линию
 
     analyst_token: str = "analyst-demo-token"  # обязательно смените в продакшене
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]

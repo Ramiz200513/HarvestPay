@@ -27,6 +27,9 @@ services:
   api:
     build: ./backend
     restart: unless-stopped
+    env_file: &backend-env-file   # все HP_* из .env (лимиты, ставка линии и т.д.); ниже — то, что важно для Docker
+      - path: ./.env
+        required: false
     environment: &backend-env
       HP_DATABASE_URL: postgresql+psycopg://harvestpay:harvestpay@db:5432/harvestpay
       HP_TASK_MODE: celery
@@ -58,6 +61,7 @@ services:
     build: ./backend
     command: celery -A app.worker worker --loglevel=info --concurrency=2
     restart: unless-stopped
+    env_file: *backend-env-file
     environment: *backend-env
     volumes:
       - ./secrets:/secrets:ro

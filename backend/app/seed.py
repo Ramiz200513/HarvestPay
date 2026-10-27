@@ -1,9 +1,20 @@
-"""Стартовый каталог товаров. Цены и поставщики — демонстрационные (порядок цен реалистичный)."""
+"""Стартовый каталог товаров. Цены, поставщики и их скидки — демонстрационные (порядок цен реалистичный).
+
+Скидка — то, что поставщик уступает маркетплейсу за оплату сразу при отгрузке вместо ожидания до осени
+(в бизнес-плане 5–7 %). Фермер видит розничную цену, скидку видит только аналитик."""
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import Product
+from .models import Product, Supplier
+
+DEMO_SUPPLIERS = {
+    # name: discount
+    "Агрохолдинг Север (демо)": 0.06,
+    "СемКорм (демо)": 0.07,
+    "АгроХим КЗ (демо)": 0.05,
+    "ЗащитаПолей (демо)": 0.07,
+}
 
 DEMO_PRODUCTS = [
     # name, category, supplier, unit, price ₸
@@ -23,6 +34,11 @@ DEMO_PRODUCTS = [
 def seed_products(db: Session) -> None:
     if db.scalar(select(Product.id).limit(1)) is not None:
         return  # каталог уже заполнен — ничего не делаем
+    suppliers = {s.name: s for s in db.scalars(select(Supplier))}
+    for name, discount in DEMO_SUPPLIERS.items():
+        if name not in suppliers:
+            suppliers[name] = Supplier(name=name, discount=discount)
+            db.add(suppliers[name])
     for name, category, supplier, unit, price in DEMO_PRODUCTS:
-        db.add(Product(name=name, category=category, supplier=supplier, unit=unit, price=price))
+        db.add(Product(name=name, category=category, supplier=suppliers[supplier], unit=unit, price=price))
     db.commit()

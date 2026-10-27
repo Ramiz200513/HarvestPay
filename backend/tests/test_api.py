@@ -174,3 +174,94 @@ def test_overlapping_application_goes_to_analyst(client):
 def test_check_rejects_bad_geometry(client):
     bad = {"type": "Polygon", "coordinates": [[[37.6, 55.7], [37.62, 55.7], [37.62, 55.71]]]}
     assert client.post("/api/fields/check", json={"geometry": bad}).status_code == 422
+
+
+# --- Версия 0.3: проверка юрлица, кадастр, сделки и деньги ---------------------------------------
+
+
+def test_verify_returns_checklist(client):
+    data = client.post("/api/farms/verify", json={"bin": "150343000016"}).json()
+    labels = [c["label"] for c in data["checks"]]
+    assert "Налоги" in labels and "Аресты и запреты" in labels and "Суды" in labels
+
+
+def test_tax_debtor_cannot_apply(client):
+    assert client.post("/api/farms/verify", json={"bin": "170343000014"}).json()["status"] == "rejected"
+    assert submit(client, bin_value="170343000014").status_code == 422
+
+
+def test_products_hide_supplier_discount(client):
+    p = client.get("/api/products").json()[0]
+    assert isinstance(p["supplier"], str) and "discount" not in p
+
+
+def find_approved(client, start_lon=74.0):
+    """Подаёт заявки на разные участки, пока одна не одобрится автоматически."""
+    for i in range(40):
+        lon = start_lon + i * 0.05
+        geom = {
+            "type": "Polygon",
+            "coordinates": [[[lon, 51.0], [lon + 0.01, 51.0], [lon + 0.01, 51.007], [lon, 51.007]]],
+        }
+        app_id = submit(client, geometry=geom).json()["id"]
+        if client.get(f"/api/applications/{app_id}").json()["status"] == "approved":
+            return app_id
+    pytest.skip("Не нашлось автоматически одобряемого поля в демо-данных")
+
+
+def test_cadastral_number_is_stored(client):
+    products = client.get("/api/products").json()
+    body = {
+        "bin": "150343000016",
+        "field": {"geometry": FIELD, "crop": "Ячмень", "cadastral_number": "01:011:002:345"},
+        "items": [{"product_id": products[0]["id"], "quantity": 1}],
+    }
+    app_id = client.post("/api/applications", json=body).json()["id"]
+    assert client.get(f"/api/applications/{app_id}").json()["field"]["cadastral_number"] == "01:011:002:345"
+    body["field"]["cadastral_number"] = "abc"
+    assert client.post("/api/applications", json=body).status_code == 422
+
+
+def test_approval_opens_deal_and_farmer_sees_only_his_part(client):
+    app_id = find_approved(client)
+    public = client.get(f"/api/applications/{app_id}").json()
+    deal = public["deal"]
+    assert deal["status"] == "contracted"
+    assert deal["farmer_total"] == sum(p["amount"] for p in public["decision"]["schedule"])
+    assert deal["economics"] is None and deal["discount_rate"] is None  # экономику фермер не видит
+
+    full = client.get(f"/api/analyst/applications/{app_id}", headers=ANALYST).json()["deal"]
+    eco = full["economics"]
+    assert eco["supplier_payout"] < eco["goods_amount"]  # поставщику — со скидкой
+    assert full["flow"][0]["kind"] == "money" and len(full["scenario"]) == 5
+
+
+def test_deal_steps_monitoring_and_portfolio(client):
+    app_id = find_approved(client, start_lon=76.0)
+    url = f"/api/analyst/deals/{app_id}"
+
+    # нельзя перепрыгнуть шаг
+    assert client.post(f"{url}/action", json={"action": "confirm_delivery"}, headers=ANALYST).status_code == 409
+    for action in ("pay_supplier", "confirm_delivery"):
+        r = client.post(f"{url}/action", json={"action": action}, headers=ANALYST)
+        assert r.status_code == 200, r.text
+    assert r.json()["deal"]["status"] == "delivered"
+
+    r = client.post(f"{url}/monitoring", headers=ANALYST)
+    assert r.status_code == 200, r.text
+    m = r.json()["deal"]["monitoring"]
+    assert m["status"] in {"normal", "stress", "not_sown", "growing", "waiting", "no_data"}
+    assert m["points"] and m["expected"]
+
+    total = r.json()["deal"]["farmer_total"]
+    r = client.post(f"{url}/action", json={"action": "record_payment", "amount": total}, headers=ANALYST)
+    assert r.json()["deal"]["status"] == "repaid"
+
+    p = client.get("/api/analyst/portfolio", headers=ANALYST).json()
+    assert p["deals_count"] >= 2
+    assert p["credit_line"]["used"] + p["credit_line"]["available"] == p["credit_line"]["limit"]
+    assert any(d["application_id"] == app_id and d["status"] == "repaid" for d in p["deals"])
+
+
+def test_deal_endpoints_require_token(client):
+    assert client.get("/api/analyst/portfolio").status_code == 401

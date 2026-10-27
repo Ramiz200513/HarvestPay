@@ -1,6 +1,8 @@
 """Конвейер обработки заявки — то, что выполняется в фоне после нажатия «Отправить».
 
-    pending → processing → (спутник → скоринг → лимит) → approved | review | error
+    pending → processing → (спутник → скоринг → андеррайтинг → кредитная линия) → approved | review | error
+
+При одобрении сразу открывается сделка (finance.open_deal): деньги резервируются в кредитной линии банка.
 
 Функция одна и та же для обоих режимов: её вызывает и FastAPI BackgroundTasks (режим background),
 и Celery-воркер (режим celery). Поэтому логика не дублируется.
@@ -16,10 +18,13 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..models import Application, ApplicationStatus, Decision, FieldSeason
-from .limits import approved_amount, build_schedule, credit_limit, format_kzt
+from .compliance import ComplianceInfo
+from .finance import credit_line_available, open_deal, required_payout
+from .limits import approved_amount, build_schedule, format_kzt
 from .providers import get_satellite_provider
 from .satellite.base import SeasonData, last_complete_seasons
 from .scoring import score_field
+from .underwriting import underwrite
 
 log = logging.getLogger(__name__)
 
@@ -31,9 +36,11 @@ def _load_or_fetch_seasons(db: Session, app: Application) -> list[SeasonData]:
     field = app.field
 
     cached = {s.year: s for s in field.seasons}
-    if all(y in cached for y in years):
+    # Сезоны, посчитанные до версии 0.3, без климата — их запрашиваем заново
+    if all(y in cached and cached[y].frost_days is not None for y in years):
         return [
-            SeasonData(c.year, c.ndvi_peak, c.ndvi_mean, c.soil_moisture, c.scenes) for c in (cached[y] for y in years)
+            SeasonData(c.year, c.ndvi_peak, c.ndvi_mean, c.soil_moisture, c.scenes, c.frost_days, c.heat_days)
+            for c in (cached[y] for y in years)
         ]
 
     provider = get_satellite_provider()
@@ -45,6 +52,7 @@ def _load_or_fetch_seasons(db: Session, app: Application) -> list[SeasonData]:
             field.seasons.append(row)
         row.ndvi_peak, row.ndvi_mean = s.ndvi_peak, s.ndvi_mean
         row.soil_moisture, row.scenes, row.source = s.soil_moisture, s.scenes, provider.name
+        row.frost_days, row.heat_days = s.frost_days, s.heat_days
     db.flush()
     return fetched
 
@@ -79,11 +87,22 @@ def process_application(db: Session, application_id: str, today: date | None = N
         result = score_field(seasons)
 
         settings = get_settings()
-        limit = credit_limit(app.field.area_ha, result.score_class, settings.limit_per_ha)
+        uw = underwrite(
+            result.score_class,
+            app.field.area_ha,
+            app.farm.registered_at,
+            ComplianceInfo.from_dict(app.farm.compliance),
+            limit_per_ha=settings.limit_per_ha,
+            class_a_min_age_months=settings.class_a_min_age_months,
+            max_limit_a=settings.max_limit_a,
+            max_limit_b=settings.max_limit_b,
+            today=today,
+        )
+        limit = uw.limit
         amount = approved_amount(app.requested_amount, limit)
 
-        reasons = list(result.reasons)
-        if result.score_class == "C":
+        reasons = [*result.reasons, *uw.reasons]
+        if uw.score_class == "C":
             reasons.append("Класс C: решение примет кредитный аналитик")
         elif amount < app.requested_amount:
             reasons.append(
@@ -92,15 +111,15 @@ def process_application(db: Session, application_id: str, today: date | None = N
 
         decision = db.scalar(select(Decision).where(Decision.application_id == app.id))
         if decision is None:
-            decision = Decision(application_id=app.id)
-            db.add(decision)
+            decision = Decision()
+            app.decision = decision  # через связь, а не db.add: open_deal ниже читает app.decision
         decision.score = result.score
-        decision.score_class = result.score_class
-        decision.components = result.components
+        decision.score_class = uw.score_class
+        decision.components = {**result.components, "field_class": uw.field_class}
         decision.reasons = reasons
         decision.limit_amount = limit
         decision.approved_amount = amount
-        decision.schedule = build_schedule(amount, result.score_class, today)
+        decision.schedule = build_schedule(amount, uw.score_class, today)
         decision.decided_by = "auto"
 
         if app.overlaps:
@@ -114,10 +133,21 @@ def process_application(db: Session, application_id: str, today: date | None = N
             decision.approved_amount = 0
             decision.schedule = []
             app.status = ApplicationStatus.REVIEW
-        elif result.score_class == "C":
+        elif uw.score_class == "C":
             app.status = ApplicationStatus.REVIEW
         elif amount > 0:
-            app.status = ApplicationStatus.APPROVED
+            need, free = required_payout(app, amount), credit_line_available(db)
+            if need > free:
+                # Скоринг пройден, но денег в линии банка сейчас нет — без аналитика не одобряем
+                decision.reasons = [
+                    *decision.reasons,
+                    f"Кредитная линия: свободно {format_kzt(max(free, 0))}, а для оплаты поставщикам нужно "
+                    f"{format_kzt(need)} — решение после пополнения линии",
+                ]
+                app.status = ApplicationStatus.REVIEW
+            else:
+                app.status = ApplicationStatus.APPROVED
+                open_deal(db, app, today)
         else:
             app.status = ApplicationStatus.REVIEW
         db.commit()

@@ -98,6 +98,9 @@ export default function NdviChart({ seasons }: { seasons: Season[] }) {
             <div>NDVI пик: {seasons[hover].ndvi_peak?.toFixed(3) ?? "нет данных"}</div>
             <div>NDVI средний: {seasons[hover].ndvi_mean?.toFixed(3) ?? "—"}</div>
             <div>Влажность: {seasons[hover].soil_moisture?.toFixed(2) ?? "—"}</div>
+            <div>
+              Заморозки: {seasons[hover].frost_days ?? "—"} дн. · жара: {seasons[hover].heat_days ?? "—"} дн.
+            </div>
             <div>Безоблачных снимков: {seasons[hover].scenes}</div>
           </div>
         )}
@@ -111,6 +114,8 @@ export default function NdviChart({ seasons }: { seasons: Season[] }) {
               <th>NDVI пик</th>
               <th>NDVI средний</th>
               <th>Влажность</th>
+              <th>Заморозки, дн.</th>
+              <th>Жара ≥35 °C, дн.</th>
               <th>Снимков</th>
             </tr>
           </thead>
@@ -121,6 +126,8 @@ export default function NdviChart({ seasons }: { seasons: Season[] }) {
                 <td>{s.ndvi_peak?.toFixed(3) ?? "—"}</td>
                 <td>{s.ndvi_mean?.toFixed(3) ?? "—"}</td>
                 <td>{s.soil_moisture?.toFixed(2) ?? "—"}</td>
+                <td>{s.frost_days ?? "—"}</td>
+                <td>{s.heat_days ?? "—"}</td>
                 <td>{s.scenes}</td>
               </tr>
             ))}

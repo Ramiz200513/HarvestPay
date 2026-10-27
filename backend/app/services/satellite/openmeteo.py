@@ -1,0 +1,84 @@
+"""Климат и влажность почвы из Open-Meteo — бесплатно и без ключа.
+
+Open-Meteo отдаёт реанализ ERA5 / ERA5-Land (тот же, что в Google Earth Engine) по координатам точки
+через обычный HTTP-запрос: https://open-meteo.com/en/docs/historical-weather-api
+Для учебного и некоммерческого использования ключ не нужен; для коммерческого у них есть платный тариф.
+
+Что берём для каждого сезона (по центру поля, сетка ~9–11 км — это риск района, а не конкретного поля):
+  frost_days    — дней с минимумом ≤ −2 °C с 20 мая по 30 июня (заморозки по всходам);
+  heat_days     — дней с максимумом ≥ 35 °C в июне–июле (жара при наливе зерна);
+  soil_moisture — средняя влажность верхних 7 см почвы с 15 апреля по 30 июня, переведённая в индекс 0..1:
+                  0,10 м³/м³ (почти сухо) → 0, 0,35 м³/м³ (полная влагоёмкость суглинка) → 1.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import date
+
+ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
+FROST_C, HEAT_C = -2.0, 35.0
+DRY_SM, WET_SM = 0.10, 0.35
+
+
+@dataclass
+class SeasonClimate:
+    frost_days: int | None
+    heat_days: int | None
+    soil_moisture: float | None  # индекс 0..1, как у радара Sentinel-1 в GEE-провайдере
+
+
+def moisture_index(sm: float | None) -> float | None:
+    if sm is None:
+        return None
+    return round(min(max((sm - DRY_SM) / (WET_SM - DRY_SM), 0.0), 1.0), 3)
+
+
+def parse_daily(payload: dict, years: list[int]) -> dict[int, SeasonClimate]:
+    """Раскладывает суточный ответ Open-Meteo по сезонам."""
+    daily = payload.get("daily") or {}
+    days = [date.fromisoformat(d) for d in daily.get("time", [])]
+    tmin = daily.get("temperature_2m_min", [])
+    tmax = daily.get("temperature_2m_max", [])
+    soil = daily.get("soil_moisture_0_to_7cm_mean", [])
+
+    result = {}
+    for year in years:
+        frost = heat = 0
+        frost_seen = heat_seen = False
+        sm_values = []
+        for i, d in enumerate(days):
+            if d.year != year:
+                continue
+            if date(year, 5, 20) <= d <= date(year, 6, 30) and i < len(tmin) and tmin[i] is not None:
+                frost_seen = True
+                frost += tmin[i] <= FROST_C
+            if date(year, 6, 1) <= d <= date(year, 7, 31) and i < len(tmax) and tmax[i] is not None:
+                heat_seen = True
+                heat += tmax[i] >= HEAT_C
+            if date(year, 4, 15) <= d <= date(year, 6, 30) and i < len(soil) and soil[i] is not None:
+                sm_values.append(soil[i])
+        result[year] = SeasonClimate(
+            frost_days=frost if frost_seen else None,
+            heat_days=heat if heat_seen else None,
+            soil_moisture=moisture_index(sum(sm_values) / len(sm_values)) if sm_values else None,
+        )
+    return result
+
+
+def fetch_climate(lat: float, lon: float, years: list[int], client, timeout: float = 30.0) -> dict[int, SeasonClimate]:
+    """Один запрос на все сезоны сразу. client — httpx.Client (в тестах подменяется)."""
+    resp = client.get(
+        ARCHIVE_URL,
+        params={
+            "latitude": round(lat, 4),
+            "longitude": round(lon, 4),
+            "start_date": f"{min(years)}-04-01",
+            "end_date": f"{max(years)}-09-30",
+            "daily": "temperature_2m_min,temperature_2m_max,soil_moisture_0_to_7cm_mean",
+            "timezone": "UTC",
+        },
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    return parse_daily(resp.json(), years)

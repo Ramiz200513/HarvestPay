@@ -14,7 +14,14 @@
 Корректировка по влажности: если в последнем сезоне индекс влажности < 0.25, снимаем 5 баллов —
 сухая почва перед новым сезоном повышает риск неурожая.
 
+Климат района (ERA5-Land, средние за сезоны):
+  заморозки после сева ≥ 2 дня/сезон → −4 балла, ≥ 1 → −2;
+  жара ≥ 35 °C в июне–июле ≥ 10 дней/сезон → −4, ≥ 5 → −2.
+NDVI показывает, как поле переживало прошлые годы; климат — насколько часто такие удары случаются
+в этом районе. Поэтому штраф небольшой: основной вес у истории самого поля.
+
 Классы: A ≥ 75, B ≥ 50, иначе C. Класс C — не отказ, а ручная проверка аналитиком.
+Поверх балла действуют правила андеррайтинга (возраст хозяйства, суды, потолки лимита) — underwriting.py.
 """
 
 from __future__ import annotations
@@ -30,6 +37,9 @@ MIN_SEASONS = 4  # меньше — статистика ненадёжна
 MIN_SCENES = 3  # сезон, где меньше 3 безоблачных снимков, не учитываем
 DRY_SOIL = 0.25
 DRY_SOIL_PENALTY = 5.0
+FROST_DAYS_HIGH, FROST_DAYS_MID = 2.0, 1.0
+HEAT_DAYS_HIGH, HEAT_DAYS_MID = 10.0, 5.0
+CLIMATE_PENALTY_HIGH, CLIMATE_PENALTY_MID = 4.0, 2.0
 
 
 @dataclass
@@ -124,6 +134,21 @@ def score_field(seasons: list[SeasonData]) -> ScoreResult:
             f"Низкая влажность почвы в {latest.year} году (индекс {latest.soil_moisture:.2f}) — −{DRY_SOIL_PENALTY:g} баллов"
         )
 
+    climate_penalty = 0.0
+    frost = [s.frost_days for s in usable if s.frost_days is not None]
+    heat = [s.heat_days for s in usable if s.heat_days is not None]
+    frost_avg = statistics.fmean(frost) if frost else None
+    heat_avg = statistics.fmean(heat) if heat else None
+    if frost_avg is not None and frost_avg >= FROST_DAYS_MID:
+        p = CLIMATE_PENALTY_HIGH if frost_avg >= FROST_DAYS_HIGH else CLIMATE_PENALTY_MID
+        climate_penalty += p
+        reasons.append(f"Поздние заморозки по всходам — в среднем {frost_avg:.1f} дня за сезон — −{p:g} балла")
+    if heat_avg is not None and heat_avg >= HEAT_DAYS_MID:
+        p = CLIMATE_PENALTY_HIGH if heat_avg >= HEAT_DAYS_HIGH else CLIMATE_PENALTY_MID
+        climate_penalty += p
+        reasons.append(f"Жара выше 35 °C в июне–июле — в среднем {heat_avg:.0f} дней за сезон — −{p:g} балла")
+    score -= climate_penalty
+
     score = round(max(0.0, min(100.0, score)), 1)
 
     return ScoreResult(
@@ -137,6 +162,9 @@ def score_field(seasons: list[SeasonData]) -> ScoreResult:
             "trend_slope": round(slope, 4),
             "trend_norm": round(trend_norm, 1),
             "moisture_penalty": moisture_penalty,
+            "frost_days_avg": None if frost_avg is None else round(frost_avg, 1),
+            "heat_days_avg": None if heat_avg is None else round(heat_avg, 1),
+            "climate_penalty": climate_penalty,
             "weights": {"mean": W_MEAN, "stability": W_STABILITY, "trend": W_TREND},
         },
         reasons=reasons,

@@ -8,6 +8,12 @@ export interface GeoPolygon {
   coordinates: LngLat[][];
 }
 
+export interface Check {
+  label: string;
+  status: "ok" | "warn" | "fail" | "info";
+  detail: string;
+}
+
 export interface Farm {
   bin: string;
   name: string | null;
@@ -16,6 +22,7 @@ export interface Farm {
   status: "verified" | "rejected";
   reasons: string[];
   source: string | null;
+  checks: Check[];
 }
 
 export interface Product {
@@ -35,11 +42,14 @@ export interface Season {
   ndvi_mean: number | null;
   soil_moisture: number | null;
   scenes: number;
+  frost_days: number | null;
+  heat_days: number | null;
 }
 
 export interface Payment {
   date: string;
   amount: number;
+  note?: string | null;
 }
 
 export interface Decision {
@@ -53,6 +63,10 @@ export interface Decision {
     trend_slope?: number;
     trend_norm?: number;
     moisture_penalty?: number;
+    frost_days_avg?: number | null;
+    heat_days_avg?: number | null;
+    climate_penalty?: number;
+    field_class?: "A" | "B" | "C";
   };
   reasons: string[];
   limit_amount: number;
@@ -86,6 +100,89 @@ export interface ApplicationItem {
   total: number;
 }
 
+export type DealStatus =
+  | "contracted"
+  | "supplier_paid"
+  | "delivered"
+  | "sowing_confirmed"
+  | "restructured"
+  | "repaid";
+
+export type DealAction = "pay_supplier" | "confirm_delivery" | "confirm_sowing" | "record_payment" | "restructure";
+
+export interface Economics {
+  goods_amount: number;
+  discount_income: number;
+  supplier_payout: number;
+  fee_income: number;
+  farmer_total: number;
+  funding_days: number;
+  funding_cost: number;
+  expected_loss: number;
+  margin: number;
+  margin_pct: number;
+}
+
+export interface FlowStep {
+  when: string;
+  source: string;
+  target: string;
+  amount: number;
+  kind: "money" | "goods";
+  note: string;
+}
+
+export interface ScenarioRow {
+  loss: number;
+  from_farmer: number;
+  insurance: number;
+  rollover: number;
+  platform_result: number;
+  rollover_uninsured: number;
+  platform_result_uninsured: number;
+}
+
+export interface NdviPoint {
+  date: string;
+  ndvi: number;
+}
+
+export interface Monitoring {
+  season: number;
+  status: "no_data" | "waiting" | "not_sown" | "growing" | "normal" | "stress";
+  message: string;
+  note: string | null;
+  norm_peak: number;
+  points: NdviPoint[];
+  expected: NdviPoint[];
+  sown_on: string | null;
+  peak: number | null;
+  ratio: number | null;
+  estimated_loss: number | null;
+  checked_at: string;
+  source: string;
+}
+
+export interface Deal {
+  status: DealStatus;
+  overdue: boolean;
+  score_class: "A" | "B" | "C";
+  goods_amount: number;
+  farmer_total: number;
+  paid_amount: number;
+  schedule: Payment[];
+  payout_date: string;
+  events: { at: string; action: string; amount: number | null; note: string }[];
+  // только аналитику — у фермера null
+  economics: Economics | null;
+  discount_rate: number | null;
+  fee_rate: number | null;
+  funding_rate: number | null;
+  flow: FlowStep[] | null;
+  scenario: ScenarioRow[] | null;
+  monitoring: Monitoring | null;
+}
+
 export interface Application {
   id: string;
   status: ApplicationStatus;
@@ -97,6 +194,7 @@ export interface Application {
   field: {
     geometry: GeoPolygon;
     crop: string;
+    cadastral_number: string | null;
     area_ha: number;
     centroid_lat: number;
     centroid_lon: number;
@@ -105,6 +203,7 @@ export interface Application {
   seasons: Season[];
   decision: Decision | null;
   overlaps: Overlap[];
+  deal: Deal | null;
 }
 
 export interface ApplicationListItem {
@@ -119,6 +218,37 @@ export interface ApplicationListItem {
   score: number | null;
   score_class: "A" | "B" | "C" | null;
   has_overlaps: boolean;
+  deal_status: DealStatus | null;
+}
+
+export interface PortfolioDeal {
+  application_id: string;
+  farm_name: string | null;
+  crop: string;
+  area_ha: number;
+  score_class: "A" | "B" | "C";
+  status: DealStatus;
+  overdue: boolean;
+  goods_amount: number;
+  farmer_total: number;
+  paid_amount: number;
+  margin: number;
+  monitoring_status: Monitoring["status"] | null;
+}
+
+export interface Portfolio {
+  credit_line: { bank: string; limit: number; used: number; available: number; rate: number };
+  deals_count: number;
+  goods_amount: number;
+  supplier_payout: number;
+  farmer_total: number;
+  paid_amount: number;
+  expected_margin: number;
+  expected_loss: number;
+  by_status: Partial<Record<DealStatus, number>>;
+  by_class: Partial<Record<"A" | "B" | "C", number>>;
+  upcoming: Payment[];
+  deals: PortfolioDeal[];
 }
 
 export interface PublicConfig {
@@ -126,4 +256,5 @@ export interface PublicConfig {
   registry_provider: "mock" | "statgov";
   seasons: number;
   limit_per_ha: number;
+  max_limit_a: number;
 }

@@ -16,12 +16,19 @@ class SeasonData:
     ndvi_mean: float | None  # средний NDVI за сезон
     soil_moisture: float | None  # индекс влажности 0..1 (прокси по радару Sentinel-1)
     scenes: int  # сколько безоблачных снимков вошло в расчёт
+    # Климат сезона по реанализу ERA5-Land (сетка ~9 км — это риск района, а не конкретного поля):
+    frost_days: int | None = None  # дней с минимумом ≤ −2 °C с 20 мая по 30 июня — заморозки по всходам
+    heat_days: int | None = None  # дней с максимумом ≥ 35 °C в июне–июле — «запал» зерна при наливе
 
 
 class SatelliteProvider(Protocol):
     name: str
 
     def fetch_seasons(self, geometry: dict, years: list[int]) -> list[SeasonData]: ...
+
+    def fetch_timeline(self, geometry: dict, start: date, end: date) -> list[dict]:
+        """NDVI по безоблачным снимкам за период: [{"date": "YYYY-MM-DD", "ndvi": 0.42}, ...]."""
+        ...
 
 
 def last_complete_seasons(count: int, today: date | None = None) -> list[int]:

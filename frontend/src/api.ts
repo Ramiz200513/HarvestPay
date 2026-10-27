@@ -3,10 +3,12 @@
 import type {
   Application,
   ApplicationListItem,
+  DealAction,
   Farm,
   FieldCheck,
   GeoPolygon,
   Product,
+  Portfolio,
   PublicConfig,
 } from "./types";
 
@@ -63,7 +65,7 @@ export const api = {
 
   createApplication: (payload: {
     bin: string;
-    field: { geometry: GeoPolygon; crop: string };
+    field: { geometry: GeoPolygon; crop: string; cadastral_number?: string };
     items: { product_id: number; quantity: number }[];
   }) =>
     request<{ id: string; status: string }>("/api/applications", {
@@ -95,6 +97,19 @@ export const api = {
       }),
     retry: (token: string, id: string) =>
       request<Application>(`/api/analyst/applications/${id}/retry`, {
+        method: "POST",
+        headers: { "X-Analyst-Token": token },
+      }),
+    portfolio: (token: string) =>
+      request<Portfolio>("/api/analyst/portfolio", { headers: { "X-Analyst-Token": token } }),
+    dealAction: (token: string, id: string, action: DealAction, amount?: number) =>
+      request<Application>(`/api/analyst/deals/${id}/action`, {
+        method: "POST",
+        headers: { "X-Analyst-Token": token },
+        body: JSON.stringify({ action, amount }),
+      }),
+    refreshMonitoring: (token: string, id: string) =>
+      request<Application>(`/api/analyst/deals/${id}/monitoring`, {
         method: "POST",
         headers: { "X-Analyst-Token": token },
       }),

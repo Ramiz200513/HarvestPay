@@ -7,7 +7,8 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import Application, ApplicationStatus, Decision
 from ..schemas import AnalystDecisionIn, ApplicationListItem, ApplicationOut
-from ..services.limits import build_schedule
+from ..services.finance import credit_line_available, open_deal, required_payout
+from ..services.limits import build_schedule, format_kzt
 from ..tasks import enqueue_application
 from .deps import require_analyst
 from .serializers import application_list_item, application_out
@@ -50,10 +51,17 @@ def decide(application_id: str, body: AnalystDecisionIn, db: Session = Depends(g
         amount = body.approved_amount if body.approved_amount is not None else app.requested_amount
         if not 0 < amount <= app.requested_amount:
             raise HTTPException(status_code=422, detail="Сумма должна быть больше 0 и не больше запрошенной")
+        need, free = required_payout(app, amount), credit_line_available(db)
+        if need > free:
+            raise HTTPException(
+                status_code=409,
+                detail=f"В кредитной линии свободно {format_kzt(max(free, 0))}, а нужно {format_kzt(need)}",
+            )
         decision.approved_amount = amount
         decision.limit_amount = max(decision.limit_amount or 0, amount)
         decision.schedule = build_schedule(amount, decision.score_class)
         app.status = ApplicationStatus.APPROVED
+        open_deal(db, app)
     else:
         decision.approved_amount = 0
         decision.schedule = []

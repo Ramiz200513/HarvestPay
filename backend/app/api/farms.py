@@ -6,7 +6,7 @@ from ..config import get_settings
 from ..db import get_db
 from ..models import Farm
 from ..schemas import BinRequest, FarmOut
-from ..services.providers import get_registry
+from ..services.providers import get_compliance, get_registry
 from ..services.registry import FarmVerification, RegistryUnavailable, verify_farm
 from .serializers import farm_out
 
@@ -16,8 +16,16 @@ router = APIRouter(prefix="/api/farms", tags=["Хозяйства"])
 def verify_and_store(db: Session, bin_value: str) -> tuple[FarmVerification, Farm | None]:
     """Проверяет БИН и сохраняет хозяйство, если оно прошло проверку.
     Отклонённые не сохраняем: в БД попадают только реальные клиенты."""
+    settings = get_settings()
     try:
-        result = verify_farm(bin_value, get_registry(), get_settings().min_company_age_months)
+        result = verify_farm(
+            bin_value,
+            get_registry(),
+            settings.min_company_age_months,
+            compliance=get_compliance(),
+            max_tax_debt=settings.max_tax_debt,
+            class_a_min_age_months=settings.class_a_min_age_months,
+        )
     except RegistryUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -34,6 +42,8 @@ def verify_and_store(db: Session, bin_value: str) -> tuple[FarmVerification, Far
     farm.verification_status = result.status
     farm.verification_reasons = result.reasons
     farm.registry_source = result.source
+    farm.compliance = result.compliance.to_dict() if result.compliance else {}
+    farm.checks = result.checks
     db.commit()
     return result, farm
 
